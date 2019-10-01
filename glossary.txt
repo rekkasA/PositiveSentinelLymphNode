@@ -1,0 +1,7 @@
+SLNB				: sentinel lymph node biopsy
+SN				: Sentinel node
+CLND				: Completion lymph node dissection
+MSM				: Melanoma-specific mortality
+MSS				: Melanoma-specific survival
+Primary tumor characterstics	: Breslow thickness, ulceration
+DFS				: Disease-free survival
