@@ -10,5 +10,4 @@ miData*
 .gitignore.*
 *.docx
 drafts
-*$*
-*~*
+~$*
