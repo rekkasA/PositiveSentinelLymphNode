@@ -3,6 +3,7 @@ title: "Positive SLNB"
 output: 
   bookdown::html_document2:
     keep_md: true
+    code_folding: hide
 ---
 
 
@@ -17,25 +18,19 @@ library(mitools)
 library(knitr)
 library(data.table)
 library(kableExtra)
-
 source('./helperFunctions.R')
-
 spss2Date <- function(x) as.Date(x/86400, origin = "1582-10-14") # converts spss date to r date
-
 tableCount <- 0
 figureCount <- 0
 ##################################
 # Read data
 ##################################
-
 eortcData <- read.spss("./Data/EORTC.sav",
                        to.data.frame = TRUE)
 eortcData$id <- 1:dim(eortcData)[1] 
-
 ## Set dates 1582-10-14 to NA
 eortcData$Date_dist_met <- ifelse(eortcData$Date_dist_met == 0, NA, eortcData$Date_dist_met)
 eortcData$first_rec <- ifelse(eortcData$first_rec == 0, NA, eortcData$first_rec)
-
 ## Transform into dates and create new times to event
 eortcData <- eortcData %>%
   mutate(last_FU = spss2Date(last_FU), 
@@ -43,39 +38,29 @@ eortcData <- eortcData %>%
          first_rec = spss2Date(first_rec),
          Date_dist_met = spss2Date(Date_dist_met),
          recurrence = ifelse(recurrence == "yes", 1, 0)) 
-
 ## problematic observations -> typos with dates could be the reason
 eortcData[eortcData$id == 344, ]$last_FU <- eortcData[eortcData$id == 344, ]$Date_dist_met
 eortcData[eortcData$id == 926, ]$first_rec <- eortcData[eortcData$id == 926, ]$Date_dist_met <- eortcData[eortcData$id == 926, ]$last_FU
 eortcData[eortcData$id == 1042, ]$first_rec <- eortcData[eortcData$id == 1042, ]$Date_dist_met <- eortcData[eortcData$id == 1042, ]$last_FU
-
 eortcData <- eortcData %>%
   mutate(timeToFollowup = as.numeric((last_FU - SLNBdate)/30.5),
          timeToRecurrence = as.numeric((first_rec - SLNBdate)/30.5),
          timeToDistant = as.numeric(Date_dist_met - SLNBdate)/30.5)
-
 eortcData$timeToRecurrence <- ifelse(is.na(eortcData$timeToRecurrence),
                                      as.numeric(eortcData$last_FU - eortcData$SLNBdate)/30.5,
                                      eortcData$timeToRecurrence)
-
 eortcData$timeToDistant <- ifelse(is.na(eortcData$timeToDistant),
                                   as.numeric(eortcData$last_FU - eortcData$SLNBdate)/30.5,
                                   eortcData$timeToDistant)
-
 eortcData$clark <- factor(eortcData$clark,
                           levels = c("ii", "iii", "iv", "v")) # dropping declared levels "i" and "unknown" that are never encountered
-
 ## exclude weird observations
 eortcData <- eortcData %>%
   filter(!(id %in% c(7, 310, 863)))
-
 # glimpse(eortcData)
-
-
 ##################################
 # Extract data
 ##################################
-
 selectedVariables <-c("id", "center", "age", "sex", "simpleloc", "clark", "CLND",
                       "histology_simple", "histology_extended", "breslow",
                       "ulceration", "SLNBdate", "no_removed_SNs", "AJCC_sub_SLNB_8th",
@@ -83,23 +68,17 @@ selectedVariables <-c("id", "center", "age", "sex", "simpleloc", "clark", "CLND"
                       "SN_tumor_burden_extended", "SN_tumor_burden_simple",
                       "no_removed_nonSNs", "no_pos_nonSNs", "no_pos_nonSNs_cat",
                       "EJC_groups", "Risk_classes")
-
 outcomes <- c("status_RFS_FDA", "timeToRecurrence", 
               "status_DMFS_FDA", "timeToDistant",
               "status_OS_FDA", "timeToFollowup",
               "status_RFS_FDA60", "status_DMFS_FDA60",
               "status_OS_FDA60")
-
 statusOutcomesoutcomes <- c("status_RFS_FDA", 
-              "status_DMFS_FDA", 
-              "status_OS_FDA")
-
-
+                            "status_DMFS_FDA", 
+                            "status_OS_FDA")
 dat <- eortcData %>%
   select(c(selectedVariables, outcomes))
-
 dat$AJCC_sub_SLNB_8th <- gsub(" ", "", dat$AJCC_sub_SLNB_8th)
-
 dat$timeToRecurrence60 <- ifelse(eortcData$timeToRecurrence < 60, 
                                  eortcData$timeToRecurrence,
                                  60)
@@ -133,13 +112,10 @@ The set of variables presented below was considered of importance for the follow
 - `no_pos_SNs_cat`
 
 
-```{r, echo = FALSE}
-
+```{r, echo = TRUE}
 dd <- datadist(dat)
 options(datadist = 'dd')
 options(digits = 8)
-
-
 miVariables <- c("center", "age", "sex", "simpleloc", "SN_tumor_burden_extended",
                  "histology_simple","breslow", "AJCC_sub_SLNB_8th", 
                  "no_pos_SNs", "no_removed_SNs", "EJC_groups",
@@ -148,103 +124,92 @@ miVariables <- c("center", "age", "sex", "simpleloc", "SN_tumor_burden_extended"
                  "status_RFS_FDA", "timeToRecurrence", 
                  "status_DMFS_FDA", "timeToDistant",
                  "status_OS_FDA", "timeToFollowup")
-
 miData <- dat[miVariables] 
-
 miData$timeToRecurrence <- log(miData$timeToRecurrence)
 miData$timeToDistant <- log(miData$timeToDistant)
 miData$timeToFollowup <- log(miData$timeToFollowup)
-
 # multiple imputations
-# miDataResult <- mice(data = miData, m = 5)
-
+# miDataResult <- mice(data = miData, m = 20)
 # saveRDS(miDataResult, file = "miDataResult.rds")
-
 miDataResult <- readRDS("miDataResult.rds")
 ```
 
 ## Models for recurrence
 
-```{r, echo = FALSE}
-S <- Surv(dat$timeToRecurrence60,
-          dat$status_RFS_FDA60)
-
+```{r, echo = TRUE}
+S <- Surv(dat$timeToRecurrence,
+          dat$status_RFS_FDA)
 form <- S ~ sex + ulceration + no_removed_SNs + 
   no_pos_SNs + simpleloc + histology_simple  +
   rcs(breslow, 3) + rcs(SN_tumor_burden, 3) + rcs(age, 3)
-
 f.mi <- fit.mult.impute(form,
                         cph,
                         xtrans = miDataResult,
                         data = miData,
-                        n.impute = 5,
+                        n.impute = 20,
                         pr = FALSE,
                         fit.reps = TRUE,
                         y = TRUE,
                         x = TRUE,
                         se.fit = TRUE)
-
 # tableCount <- tableCount + 1
-# kable(round(summary(f.mi)[, c(4, 6, 7)], 2), caption = paste("Table", paste0(tableCount, ":"), "Multivariable Cox analysis of recurrence"))
+kable(round(summary(f.mi)[, c(4, 6, 7)], 2), caption = "Multivariable Cox analysis of recurrence") %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed", "responsive"))
 ```
 
 We performed a backwards selection of to come up with the final model that included `ulceration`, `age`, `breslow` and `SN_tumor_burden` (Table \@ref(tab:finalRec)). Logarithmic transformations of the continuous covariates -i.e. `age`, `breslow`  and `SN_tumor_burden`- adequately represented their effects.
 
-```{r finalRec,  echo = FALSE}
+```{r finalRec,  echo = TRUE}
 form <- S ~ ulceration + log(age) + log(SN_tumor_burden) + log(breslow)
-
 f.mi <- fit.mult.impute(form,
                         cph,
                         xtrans = miDataResult,
                         data = miData,
-                        n.impute = 5,
+                        n.impute = 20,
                         pr = FALSE,
                         fit.reps = TRUE,
                         y = TRUE,
                         x = TRUE,
                         se.fit = TRUE)
-
 summaryFit <- summary(f.mi)
 namesSummaryFit <- rownames(summaryFit)[seq(1, 7, 2)]
 summaryFit <- summaryFit[seq(2, 8, 2), c(4, 6, 7)]
 rownames(summaryFit) <- namesSummaryFit
 colnames(summaryFit)[1] <- "Hazard ratio"
-
 kable(
   round(summaryFit, 2), 
-  "latex",
-  booktabs = TRUE,
-  caption =  "Final model for recurrence")
+  # "latex",
+  # booktabs = TRUE,
+  caption =  "Final model for recurrence") %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed", "responsive"))
 ```
 
 We used the variables in the final model to predict 5-year recurrence (Table \@ref(tab:finalRec5)).
 
-```{r finalRec5, echo = FALSE}
+```{r finalRec5, echo = TRUE}
 S <- Surv(dat$timeToRecurrence60,
           dat$status_RFS_FDA60)
 form <- S ~ ulceration + log(age) + log(SN_tumor_burden) + log(breslow)
-
 f.mi <- fit.mult.impute(form,
                         cph,
                         xtrans = miDataResult,
                         data = miData,
-                        n.impute = 5,
+                        n.impute = 20,
                         pr = FALSE,
                         fit.reps = TRUE,
                         y = TRUE,
                         x = TRUE,
                         se.fit = TRUE)
-
 summaryFit <- summary(f.mi)
 namesSummaryFit <- rownames(summaryFit)[seq(1, 7, 2)]
 summaryFit <- summaryFit[seq(2, 8, 2), c(4, 6, 7)]
 rownames(summaryFit) <- namesSummaryFit
 colnames(summaryFit)[1] <- "Hazard ratio"
-
 kable(round(summaryFit, 2),
-      "latex",
-      booktabs = TRUE,
-      caption = "Final model for 5-year recurrence")
+      # "latex",
+      # booktabs = TRUE,
+      caption = "Final model for 5-year recurrence") %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed", "responsive"))
 ```
 
 The final 5-year recurrence model had c-index of `r round(mi.cindex(f.mi, miDataResult)[1], 2)` (95 percent c.i. `r round(mi.cindex(f.mi, miDataResult)[3], 2)` to `r round(mi.cindex(f.mi, miDataResult)[4], 2)`). 
@@ -253,7 +218,7 @@ We assess calibration of the final model using a leave-one-center-out cross vali
 
 In general, we see quite adequate performance across centers, where confidence intervals include the diagonal. However, in smaller centers such as the one in Groningen there is substantial underestimation of risk.
 
-```{r leave1outCalRec, echo = FALSE, fig.cap="\\label{fig:leave1outCalRec}Leave one center out cross validation for the prediction of 5-year recurrence", fig.align = "center", fig.width = 8, fig.height = 8}
+```{r leave1outCalRec, echo = TRUE, fig.cap="\\label{fig:leave1outCalRec}Leave one center out cross validation for the prediction of 5-year recurrence", fig.align = "center", fig.width = 8, fig.height = 8}
 centers <- unique(dat$center)
 discrimination <- rep(0, length(centers))
 par(mfrow=c(3, 3))
@@ -289,7 +254,6 @@ for(i in 1:length(centers)){
   # saveRDS(miDataResultTest, file.path(".", "mi",paste("miDataResultTest", centers[i], "rds", sep = ".")))
   
   miDataResultTest <- readRDS(file.path(".", "mi",paste("miDataResultTest", centers[i], "rds", sep = ".")))
-
   f.miTrainCenters <- fit.mult.impute(formTrainCenters,
                                       cph,
                                       xtrans = miDataResultTrain,
@@ -361,50 +325,43 @@ for(i in 1:length(centers)){
 
 ## Distant metastasis
 
-```{r, echo = FALSE}
+```{r, echo = TRUE}
 SDistant <- Surv(dat$timeToDistant60,
                  dat$status_DMFS_FDA60)
-
 form <- SDistant ~ sex + ulceration + no_removed_SNs + 
   no_pos_SNs + simpleloc + histology_simple  +
   rcs(breslow, 3) + rcs(SN_tumor_burden, 3) + rcs(age, 3)
-  
-f.miDistantFull <- fit.mult.impute(form,
-                           cph,
-                           xtrans = miDataResult,
-                           data = miData,
-                           n.impute = 5,
-                           pr = FALSE,
-                           fit.reps = TRUE,
-                           y = TRUE,
-                           x = TRUE,
-                           se.fit = TRUE)
 
+f.miDistantFull <- fit.mult.impute(form,
+                                   cph,
+                                   xtrans = miDataResult,
+                                   data = miData,
+                                   n.impute = 20,
+                                   pr = FALSE,
+                                   fit.reps = TRUE,
+                                   y = TRUE,
+                                   x = TRUE,
+                                   se.fit = TRUE)
 SRecurrence  <- Surv(dat$timeToRecurrence60,
                      dat$status_RFS_FDA60)
-
 form <- SRecurrence ~ ulceration + log(age) + log(SN_tumor_burden) + log(breslow)
-
 f.miRec <- fit.mult.impute(form,
                            cph,
                            xtrans = miDataResult,
                            data = miData,
-                           n.impute = 5,
+                           n.impute = 20,
                            pr = FALSE,
                            fit.reps = TRUE,
                            y = TRUE,
                            x = TRUE,
                            se.fit = TRUE)
 linearPredictor <- f.miRec$linear
-
 dd <- datadist(linearPredictor)
 options(datadist = 'dd')
 options(digits = 8)
-
 fDistantCalibrated <- cph(SDistant ~ linearPredictor, 
-             y = TRUE,
-             x = TRUE)
-
+                          y = TRUE,
+                          x = TRUE)
 cIndexCalibrated <- rcorr.cens(-linearPredictor*coef(fDistantCalibrated), SDistant)
 ```
 
@@ -412,12 +369,10 @@ For the assessment of distant metastasis we considered a calibrated version of t
 
 In terms of calibation, we first assess a leave-one-center-out cross validation, where the baseline hazard is estimated from the training set of 8 centers based on the cox regression model for 5-year recurrence and the calibration slope for the linear predictor is derived from a cox model predicting risk of distant metastasis form the linear predictor of the previous model (Figure \@ref(fig:leave1outCalDistant)). 
 
-```{r leave1outCalDistant, echo = FALSE,fig.cap="\\label{fig:leave1outCal}Leave one center out cross validation of the calibrated model for 5-year distant metastasis", fig.align = "center", fig.width = 8, fig.height = 8}
+```{r leave1outCalDistant, echo = TRUE,fig.cap="\\label{fig:leave1outCal}Leave one center out cross validation of the calibrated model for 5-year distant metastasis", fig.align = "center", fig.width = 8, fig.height = 8}
 SRecurrence  <- Surv(dat$timeToRecurrence60,
                      dat$status_RFS_FDA60)
-
 form <- SRecurrence ~ ulceration + log(age) + log(SN_tumor_burden) + log(breslow)
-
 centers <- unique(dat$center)
 discrimination <- rep(0, length(centers))
 par(mfrow=c(3,3))
@@ -527,63 +482,53 @@ for(i in 1:length(centers)){
 ## Overall mortality
 
 
-```{r, echo = FALSE}
+```{r, echo = TRUE}
 SDeath <- Surv(dat$timeToFollowup60,
-                 dat$status_OS_FDA60)
-
+               dat$status_OS_FDA60)
 form <- SDeath ~ sex + ulceration + no_removed_SNs + 
   no_pos_SNs + simpleloc + histology_simple  +
   rcs(breslow, 3) + rcs(SN_tumor_burden, 3) + rcs(age, 3)
-  
-f.miDeathFull <- fit.mult.impute(form,
-                           cph,
-                           xtrans = miDataResult,
-                           data = miData,
-                           n.impute = 5,
-                           pr = FALSE,
-                           fit.reps = TRUE,
-                           y = TRUE,
-                           x = TRUE,
-                           se.fit = TRUE)
 
+f.miDeathFull <- fit.mult.impute(form,
+                                 cph,
+                                 xtrans = miDataResult,
+                                 data = miData,
+                                 n.impute = 20,
+                                 pr = FALSE,
+                                 fit.reps = TRUE,
+                                 y = TRUE,
+                                 x = TRUE,
+                                 se.fit = TRUE)
 SRecurrence  <- Surv(dat$timeToRecurrence60,
                      dat$status_RFS_FDA60)
-
 form <- SRecurrence ~ ulceration + log(age) + log(SN_tumor_burden) + log(breslow)
-
 f.miRec <- fit.mult.impute(form,
                            cph,
                            xtrans = miDataResult,
                            data = miData,
-                           n.impute = 5,
+                           n.impute = 20,
                            pr = FALSE,
                            fit.reps = TRUE,
                            y = TRUE,
                            x = TRUE,
                            se.fit = TRUE)
 linearPredictor <- f.miRec$linear
-
 dd <- datadist(linearPredictor)
 options(datadist = 'dd')
 options(digits = 8)
-
 fDeathCalibrated <- cph(SDeath ~ linearPredictor, 
-             y = TRUE,
-             x = TRUE)
-
+                        y = TRUE,
+                        x = TRUE)
 cIndexCalibrated <- rcorr.cens(-linearPredictor*coef(fDeathCalibrated), SDeath)
-
 ```
 
 For the assessment 5-year overall mortality we considered a calibrated version of the 5-year recurrence model. We compare the performance of the considered model to that of multivariable Cox regression model including all 9 covariates of interest. The association between recurrence and overall mortality was not different (calibration slope 1.04, 95 percent c.i. 0.88 to 1.20). The full model had a c-index of `r round(mi.cindex(f.miDeathFull, miDataResult)[1], 2)` (95 percent c.i. `r round(mi.cindex(f.miDeathFull, miDataResult)[3], 2)` to `r round(mi.cindex(f.miDeathFull, miDataResult)[4], 2)`) while the calibrated model had a c-index of `r round(cIndexCalibrated[1], 2)` (95 percent c.i. `r round(cIndexCalibrated[1] - 1.96*cIndexCalibrated[3]/2, 2)` to `r round(cIndexCalibrated[1] + 1.96*cIndexCalibrated[3]/2, 2)`). We assess calibation as previously using leave-one-center-out cross validation (Figure \@ref(fig:leave1outCalDeath)).
 
 
-```{r leave1outCalDeath, echo = FALSE,fig.cap="\\label{fig:leave1outCalDeath}Leave one center out cross validation of the calibrated model for 5-year overall mortality", fig.align = "center", fig.width = 8, fig.height = 8}
+```{r leave1outCalDeath, echo = TRUE,fig.cap="\\label{fig:leave1outCalDeath}Leave one center out cross validation of the calibrated model for 5-year overall mortality", fig.align = "center", fig.width = 8, fig.height = 8}
 SRecurrence  <- Surv(dat$timeToRecurrence60,
                      dat$status_RFS_FDA60)
-
 form <- SRecurrence ~ ulceration + log(age) + log(SN_tumor_burden) + log(breslow)
-
 centers <- unique(dat$center)
 discrimination <- rep(0, length(centers))
 par(mfrow=c(3,3))
@@ -693,7 +638,7 @@ for(i in 1:length(centers)){
 
 We developed a 4-item score assigning points to each prognostic factor based on the magnitude of their association with recurrence. The nomogram to calculate the score is given in \@ref(fig:nomogram). The calibrated results for 5-year distant recurrence and 5-year mortality can be found in Figure \@ref(fig:combinedPlot).
 
-```{r nomogram, echo = FALSE, fig.cap="\\label{fig:nomogram}Nomogram for 5-year recurrence", fig.align = "center", fig.width = 7.5, fig.height = 7.5}
+```{r nomogram, echo = TRUE, fig.cap="\\label{fig:nomogram}Nomogram for 5-year recurrence", fig.align = "center", fig.width = 7.5, fig.height = 7.5}
 breslow.class <- c(0.1, .15, .25, .4, .6, 1, 1.5, 2.5, 4, 6, 8, 10)
 t.class <- c(.05,.1, .2, .4, .8, 1.5, 2.5, 4, 6, 8)
 age.class <- c(25, 30, 40, 50, 60, 75)
@@ -707,96 +652,83 @@ g <- Newlabels(f.mi, c(ulceration = "Ulceration",
                        age = "Age (years)",
                        SN_tumor_burden = "Tumor burden (mm)",
                        breslow = "Breslow (mm)"))
-
 nom1 <- nomogram(g, lp = FALSE,
-                maxscale = 10,
-                age = age.class,
-                SN_tumor_burden = t.class,
-                breslow = breslow.class)
-png("nomogram.png", width = 900, height = 700)
+                 maxscale = 10,
+                 age = age.class,
+                 SN_tumor_burden = t.class,
+                 breslow = breslow.class)
+# png("nomogram.png", width = 900, height = 700)
 plot(nom1,
      total.sep.page = FALSE,
      col.grid = gray(c(.7, .9)),
      vnames = "names")
-dev.off()
+# dev.off()
 ```
 
 
-```{r, echo = FALSE}
+```{r, echo = TRUE}
 dat.complete <- complete(miDataResult, 1)
 breslowTrunc <- dat.complete$breslow
 breslowTrunc[dat.complete$breslow < .2] <- .2
 breslowTrunc[dat.complete$breslow > 10] <- 10
-
 SN_tumor_burdenTrunc <- dat.complete$SN_tumor_burden
 SN_tumor_burdenTrunc[dat.complete$SN_tumor_burden < .2] <- .2
 SN_tumor_burdenTrunc[dat.complete$SN_tumor_burden > 7] <- 7
-
 ageTrunc <- dat.complete$age
 ageTrunc[dat.complete$age < 25] <- 25
 ageTrunc[dat.complete$age > 75] <- 75
-
 SRecurrence  <- Surv(dat$timeToRecurrence60,
                      dat$status_RFS_FDA60)
-
 form <- SRecurrence ~ ulceration + log(age) + log(SN_tumor_burden) + log(breslow)
-
 f.miRec <- fit.mult.impute(form,
                            cph,
                            xtrans = miDataResult,
                            data = miData,
-                           n.impute = 5,
+                           n.impute = 20,
                            pr = FALSE,
                            fit.reps = TRUE,
                            y = TRUE,
                            x = TRUE,
                            se.fit = TRUE)
-
 SDistant <- Surv(dat$timeToDistant60,
                  dat$status_DMFS_FDA60)
 lp <- f.miRec$linear
 fDistant <- cph(SDistant ~ lp, 
-             y = TRUE,
-             x = TRUE)
-
+                y = TRUE,
+                x = TRUE)
 SDeath <- Surv(dat$timeToFollowup60, 
                dat$status_OS_FDA60)
 fDeath <- cph(SDeath ~ lp,
               y = TRUE, 
               x = TRUE)
-
 baseHazRec <- basehaz(f.miRec)
 baseHazDistant <- basehaz(fDistant)
 baseHazDeath <- basehaz(fDeath)
 baseSurv <- estimtateBaselineSurvival(baseHazRec, 60)
 baseSurvDistant <- estimtateBaselineSurvival(baseHazDistant, 60)
 baseSurvDeath <- estimtateBaselineSurvival(baseHazDeath, 60)
-
-
 interceptNom <- attr(nom, "info")$Intercept
 pointwiseIncrease <- 1/attr(nom, "info")$sc
 points <- 0:23
-
 lp.score<-predict(f.miRec,
                   newdata=data.frame(ulceration=dat.complete$ulceration,
                                      age=ageTrunc,
                                      SN_tumor_burden=SN_tumor_burdenTrunc,
                                      breslow = breslowTrunc))
 score <- (lp.score - interceptNom)/pointwiseIncrease
-score[score > 22] <- 22
+score <- ifelse(score > 22, 22, score)
 score <- round((lp.score - interceptNom)/pointwiseIncrease, 0)
+score[score>22] = 22
 h <- hist(score,
           plot = FALSE,
           breaks = 0:24,
           right = FALSE)
-
 recPoints <- interceptNom + pointwiseIncrease*points
 distantPoints <- coef(fDistant)*(interceptNom + pointwiseIncrease*points)
 deathPoints <- coef(fDeath)*(interceptNom + pointwiseIncrease*points)
 recProbs <- 1 - baseSurv^exp(recPoints)
 distantProbs <- 1 - baseSurvDistant^exp(distantPoints)
 deathProbs <- 1 - baseSurvDeath^exp(deathPoints)
-
 pointsToProbs <- data.frame(points = points,
                             recProbs = recProbs*100,
                             distantProbs = distantProbs*100,
@@ -806,13 +738,11 @@ pointsToProbs$riskLevel <- c(rep(1, 10),
                              rep(2, 6),
                              rep(3, 4),
                              rep(4, 4))
-
 pointsToProbs$riskLevel <- factor(pointsToProbs$riskLevel, labels = c(" < 25%", " 25-50%", " 50-75%", " > 75%"))
-xlsx::write.xlsx(pointsToProbs, "newPointConversion.xlsx")
-
+# write.csv(pointsToProbs, "newPointConversion.csv")
 ```
 
-```{r combinedPlot, echo = FALSE, fig.cap="\\label{fig:combinedPlot}Absolute risks along with risk distribution",fig.align = "center", fig.width = 8.5, fig.height = 7}
+```{r combinedPlot, echo = TRUE, fig.cap="\\label{fig:combinedPlot}Absolute risks along with risk distribution",fig.align = "center", fig.width = 8.5, fig.height = 7}
 ggplot(data = pointsToProbs, aes(x = points)) +
   geom_bar(mapping = aes(x = points-.5, y = hist*5, fill = factor(riskLevel)),
            stat = "identity", 
@@ -840,28 +770,23 @@ ggsave("newCombinedPlot.png")
 
 # External validation{#externalVal}
 
-```{r, echo = FALSE}
-
+```{r, echo = TRUE}
 dd <- datadist(dat)
 options(datadist = 'dd')
 options(digits = 8)
-
 S <- Surv(dat$timeToRecurrence60,
           dat$status_RFS_FDA60)
-
 form <- S ~ ulceration + log(age) + SN_tumor_burden_extended + log(breslow)
-
 f.mi <- fit.mult.impute(form,
                         cph,
                         xtrans = miDataResult,
                         data = miData,
-                        n.impute = 5,
+                        n.impute = 20,
                         pr = FALSE,
                         fit.reps = TRUE,
                         y = TRUE,
                         x = TRUE,
                         se.fit = TRUE)
-
 summaryFit <- summary(f.mi)
 namesSummaryFit <- rownames(summaryFit)
 namesSummaryFit <- namesSummaryFit[seq(1, 15, 2)]
@@ -872,12 +797,13 @@ colnames(summaryFit)[1] <- "Hazard ratio"
 
 The variable `SN_tumor_burden` is not available in the valaidation set, but `SN_tumor_burden_extended` is. For that reason we first need to assess the performance of a model derived in the training set, where we substitute `SN_tumor_burden`. The new model has an apparent c-index of `r round(mi.cindex(f.mi, miDataResult)[1], 2)` (95 percent c.i. `r round(mi.cindex(f.mi, miDataResult)[3], 2)` to `r round(mi.cindex(f.mi, miDataResult)[4], 2)`). The model to be validated in the validation set is given in Table \@ref(tab:validRec)
 
-```{r validRec, echo = FALSE}
+```{r validRec, echo = TRUE}
 kable(
   round(summaryFit, 2), 
-  "latex",
-  booktabs = TRUE,
-  caption =  "Model for recurrence to be validated")
+  # "latex",
+  # booktabs = TRUE,
+  caption =  "Model for recurrence to be validated") %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed", "responsive"))
 ```
 
 
@@ -885,8 +811,6 @@ kable(
 decogData <- read.spss("./Data/DECOG.sav",
                        to.data.frame = TRUE)
 decogData$id <- 1:dim(decogData)[1] 
-
-
 selectedVariables <-c("id", "age", "sex", "simpleloc",
                       "histology_simple", "breslow", "CLND",
                       "ulceration", "SLNBdate", "no_removed_SNs", "AJCCsub_8th_SLNB_only_DV",
@@ -894,28 +818,21 @@ selectedVariables <-c("id", "age", "sex", "simpleloc",
                       "SN_tumor_burden_extended", "SN_tumor_burden_simple",
                       "no_removed_nonSNs", "no_pos_nonSNs", "no_pos_nonSNs_cat",
                       "EJC_groups", "Risk_classes")
-
 outcomes <- c("status_RFS_FDA", "time_RFS", 
               "status_DMFS_FDA", "time_DMFS",
               "status_OS_FDA", "time_OS",
               "status_RFS_FDA60", "time_RFS60", 
               "status_DMFS_FDA60", "time_DMFS60",
               "status_OS_FDA60", "time_OS60")
-
 datValidation <- decogData %>%
   select(c(selectedVariables, outcomes)) %>%
   mutate(SLNBdate = spss2Date(SLNBdate))
-
 # colnames(datValidation)[!complete.cases(t(datValidation))] # length = 15
 # gg_miss_var(datValidation, show_pct = TRUE)
 # gg_miss_upset(datValidation, nsets = 14, nintersects = 500)
-
-
 dd <- datadist(datValidation)
 options(datadist = 'dd')
 options(digits = 8)
-
-
 miVariables <- c("age", "sex", "simpleloc",
                  "histology_simple", "breslow",
                  "ulceration", "SLNBdate", "no_removed_SNs", "AJCCsub_8th_SLNB_only_DV",
@@ -925,21 +842,13 @@ miVariables <- c("age", "sex", "simpleloc",
                  "status_RFS_FDA", "time_RFS", 
                  "status_DMFS_FDA", "time_DMFS",
                  "status_OS_FDA", "time_OS")
-
-
-
 miDataVal <- datValidation[miVariables] 
-
 miDataVal$time_RFS <- log(miDataVal$time_RFS)
 miDataVal$time_DMFS <- log(miDataVal$time_DMFS)
 miDataVal$time_OS <- log(miDataVal$time_OS)
-
 # miDataResultVal <- mice(data = miDataVal, m = 5)
-
 # saveRDS(miDataResultVal, file = "miDataResultValidation.rds")
-
 miDataResultVal <- readRDS("miDataResultValidation.rds")
-
 ```
 
 ```{r, include = FALSE}
@@ -956,17 +865,11 @@ f.mi <- fit.mult.impute(form,
                         y = TRUE,
                         x = TRUE,
                         se.fit = TRUE)
-
-
-
-
 survValidation <- Surv(datValidation$time_RFS60,
                        datValidation$status_RFS_FDA60)
-
 cIndex <- NULL
 linearPredictor <- NULL
 timePoint <- 60
-
 for (j in 1:5){
   
   lpValidation <- predict(f.mi, newdata = complete(miDataResultVal, j))
@@ -976,7 +879,6 @@ for (j in 1:5){
   linearPredictor <-cbind(linearPredictor, lpValidation)
   
 }
-
 linearPredictorAverage <- rowMeans(linearPredictor)
 baselineHazard <- basehaz(f.mi)
 predictedProbabilities <- predictSurvival(baselineHazard = baselineHazard,
@@ -987,18 +889,15 @@ calibrationData <- data.frame(predictedProbabilities,
                                              quantile(predictedProbabilities, seq(0, 1, .2)),
                                              include.lowest = TRUE))
 levels(calibrationData$quintile) <- paste0("q", 1:5)
-
 calibrationData <- data.frame(calibrationData, 
                               time = datValidation$time_RFS60,
                               status = datValidation$status_RFS_FDA60)
-
 quintileResults <- calibrationData %>%
   group_by(quintile) %>%
   summarise(mean = mean(predictedProbabilities), 
             surv = getKaplanMeier(time,status, timePoint),
             lower =  lowerKaplanMeier(time, status, timePoint),
             upper = upperKaplanMeier(time, status, timePoint))
-
 cIndexImputation <- summary(MIcombine(as.list(cIndex[,1]),as.list(cIndex[,2]^2)))[1:4]
 ```
 
@@ -1006,7 +905,7 @@ cIndexImputation <- summary(MIcombine(as.list(cIndex[,1]),as.list(cIndex[,2]^2))
 The altered model for recurrence gave very similar performance in the validation set, with a c-index of `r round(cIndexImputation[1], 2)` (95 percent c.i. `r round(cIndexImputation[3], 2)` to `r round(cIndexImputation[4], 2)`). From the calibration plot (Figure \@ref(fig:calibrationPlotRec)) we see that there may be slight under-estimation for higher risk patients.
 
 
-```{r calibrationPlotRec, echo = FALSE, fig.cap="\\label{fig:calibrationPlotRec}Calibration plot of 5-year recurrence model", fig.align = "center"}
+```{r calibrationPlotRec, echo = TRUE, fig.cap="\\label{fig:calibrationPlotRec}Calibration plot of 5-year recurrence model", fig.align = "center"}
 ggplot(data = quintileResults, aes(x = mean, y = surv)) +
   geom_point(size = 2) +
   geom_errorbar(aes(ymin = lower, ymax = upper, width = 0)) +
@@ -1022,9 +921,7 @@ ggplot(data = quintileResults, aes(x = mean, y = surv)) +
 ```{r, include = FALSE}
 SRecurrence  <- Surv(dat$timeToRecurrence60,
                      dat$status_RFS_FDA60)
-
 form <- SRecurrence ~ ulceration + log(age) + SN_tumor_burden_extended + log(breslow)
-
 f.miRec <- fit.mult.impute(form,
                            cph,
                            xtrans = miDataResult,
@@ -1035,17 +932,14 @@ f.miRec <- fit.mult.impute(form,
                            y = TRUE,
                            x = TRUE,
                            se.fit = TRUE)
-
 SDistant <- Surv(dat$timeToDistant60,
                  dat$status_DMFS_FDA60)
 lp <- f.miRec$linear
 fDistant <- cph(SDistant ~ lp, 
                 y = TRUE,
                 x = TRUE)
-
 survValidation <- Surv(datValidation$time_DMFS60,
                        datValidation$status_DMFS_FDA60)
-
 pp = validateOnDecog(fTraining = f.miRec, 
                      fTest = fDistant, 
                      survValidation = survValidation, 
@@ -1055,7 +949,7 @@ pp = validateOnDecog(fTraining = f.miRec,
 
 For the case of distant metastasis, the c-index of the calibrated model in external validation was `r round(pp$discrimination[1], 2)` (95 percent c.i. `r round(pp$discrimination[3], 2)` to `r round(pp$discrimination[4], 2)`). The model performed very well in terms of calibration as well (Figure \@ref(fig:calibrationPlotDistant)). 
 
-```{r calibrationPlotDistant, echo = FALSE, fig.cap="\\label{fig:calibrationPlotDistant}Calibration plot of 5-year distant metastasis model", fig.align = "center"}
+```{r calibrationPlotDistant, echo = TRUE, fig.cap="\\label{fig:calibrationPlotDistant}Calibration plot of 5-year distant metastasis model", fig.align = "center"}
 pp$calibration + ggtitle("Calibration plot for distant metastasis")
 ```
 
@@ -1065,21 +959,17 @@ SDeath <- Surv(dat$timeToFollowup60,
 fDeath <- cph(SDeath ~ lp,
               y = TRUE, 
               x = TRUE)
-
 survValidation <- Surv(datValidation$time_OS60,
                        datValidation$status_OS_FDA60)
-
 pp = validateOnDecog(fTraining = f.miRec, 
                      fTest = fDeath, 
                      survValidation = survValidation, 
                      miDataResultValidation = miDataResultVal)
-
-
 ```
 
 Similar conclusions can be drawn for the case of overall mortality. The c-index of the calibrated model in external validation was `r round(pp$discrimination[1], 2)` (95 percent c.i. `r round(pp$discrimination[3], 2)` to `r round(pp$discrimination[4], 2)`) while calibration to the test set was again very good plot except for the case of high risk patients where risks were slightly underestimated (Figure \@ref(fig:calibrationPlotDeath))
 
-```{r calibrationPlotDeath, echo = FALSE, fig.cap="\\label{fig:calibrationPlotDeath}Calibration plot of 5-year overall mortality model", fig.align = "center"}
+```{r calibrationPlotDeath, echo = TRUE, fig.cap="\\label{fig:calibrationPlotDeath}Calibration plot of 5-year overall mortality model", fig.align = "center"}
 pp$calibration + ggtitle("Calibration plot for overall mortality")
 ```
 
@@ -1089,7 +979,6 @@ The tertiary goal is to create a prediction model for recurrence (and DMFS and O
 
 ```{r, include = FALSE}
 eortcDataCLND <- subset(eortcData, CLND == "yes")
-
 selectedVariables <-c("id", "center", "age", "sex", "simpleloc", "clark",
                       "histology_simple", "histology_extended", "breslow",
                       "ulceration", "SLNBdate", "no_removed_SNs", "AJCC_sub_SLNB_8th",
@@ -1097,30 +986,25 @@ selectedVariables <-c("id", "center", "age", "sex", "simpleloc", "clark",
                       "SN_tumor_burden_extended",
                       "no_removed_nonSNs", "no_pos_nonSNs", "no_pos_nonSNs_cat",
                       "EJC_groups", "Risk_classes")
-
 outcomes <- c("status_RFS_FDA", "timeToRecurrence", 
               "status_DMFS_FDA", "timeToDistant",
               "status_OS_FDA", "timeToFollowup",
               "status_RFS_FDA60", "status_DMFS_FDA60",
               "status_OS_FDA60")
-
 statusOutcomesoutcomes <- c("status_RFS_FDA", 
                             "status_DMFS_FDA", 
                             "status_OS_FDA")
-
 datCLND <- eortcDataCLND %>%
   select(c(selectedVariables, outcomes))
-
 datCLND$timeToRecurrence60 <- ifelse(eortcDataCLND$timeToRecurrence < 60, 
-                                 eortcDataCLND$timeToRecurrence,
-                                 60)
+                                     eortcDataCLND$timeToRecurrence,
+                                     60)
 datCLND$timeToDistant60 <- ifelse(eortcDataCLND$timeToDistant < 60,
-                              eortcDataCLND$timeToDistant,
-                              60)
+                                  eortcDataCLND$timeToDistant,
+                                  60)
 datCLND$timeToFollowup60 <- ifelse(eortcDataCLND$timeToFollowup < 60,
-                               eortcDataCLND$timeToFollowup,
-                               60)
-
+                                   eortcDataCLND$timeToFollowup,
+                                   60)
 miVariables <- c("center", "age", "sex", "simpleloc", "clark", "SN_tumor_burden_extended",
                  "histology_simple","breslow", "AJCC_sub_SLNB_8th",
                  "ulceration", "SLNBdate", "no_removed_SNs",
@@ -1128,30 +1012,22 @@ miVariables <- c("center", "age", "sex", "simpleloc", "clark", "SN_tumor_burden_
                  "status_RFS_FDA", "timeToRecurrence", 
                  "status_DMFS_FDA", "timeToDistant",
                  "status_OS_FDA", "timeToFollowup")
-
-
 miData <- datCLND[miVariables] 
-
 miData$timeToRecurrence <- log(miData$timeToRecurrence)
 miData$timeToDistant <- log(miData$timeToDistant)
 miData$timeToFollowup <- log(miData$timeToFollowup)
-
 ## multiple imputations
 # miDataResultCLND <- mice(data = miData, m = 5)
 # saveRDS(miDataResultCLND, "miDataResultCLND.rds")
 miDataResultCLND <- readRDS("miDataResultCLND.rds")
-
 S <- Surv(datCLND$timeToRecurrence60, 
           datCLND$status_RFS_FDA60)
-
 form <- S ~ ulceration + log(age) + log(SN_tumor_burden) + log(breslow) + no_pos_nonSNs_cat
 # form <- S ~ ulceration + log(age) + log(SN_tumor_burden) + log(breslow)
 # form <- S ~ ulceration + log(age) + SN_tumor_burden_extended + log(breslow)
-
 dd <- datadist(datCLND)
 options(datadist = 'dd')
 options(digits = 8)
-
 f.mi <- fit.mult.impute(form,
                         cph,
                         xtrans = miDataResultCLND,
@@ -1162,7 +1038,6 @@ f.mi <- fit.mult.impute(form,
                         y = TRUE,
                         x = TRUE,
                         se.fit = TRUE)
-
 cIndex <- round(mi.cindex(f.mi, miDataResultCLND)[1:4], 2)
 ```
 
@@ -1170,15 +1045,12 @@ More specifically, in the case of 5-year recurrence a model including `ulceratio
 ```{r, include = FALSE}
 S <- Surv(datCLND$timeToDistant60, 
           datCLND$status_DMFS_FDA60)
-
 form <- S ~ ulceration + log(age) + log(SN_tumor_burden) + log(breslow) + no_pos_nonSNs_cat
 # form <- S ~ ulceration + log(age) + log(SN_tumor_burden) + log(breslow)
 # form <- S ~ ulceration + log(age) + SN_tumor_burden_extended + log(breslow)
-
 dd <- datadist(datCLND)
 options(datadist = 'dd')
 options(digits = 8)
-
 f.mi <- fit.mult.impute(form,
                         cph,
                         xtrans = miDataResultCLND,
@@ -1189,22 +1061,18 @@ f.mi <- fit.mult.impute(form,
                         y = TRUE,
                         x = TRUE,
                         se.fit = TRUE)
-
 cIndex <- round(mi.cindex(f.mi, miDataResultCLND)[1:4], 2)
 ```
 For 5-year distant metastasis the c-index is `r cIndex[1]` with a 95 percent c.i. `r cIndex[3]` to `r cIndex[4]` compared to 0.7 (95 percent c.i. 0.67 to 0.72) of the origial model.
 ```{r, include = FALSE}
 S <- Surv(datCLND$timeToFollowup60, 
           datCLND$status_OS_FDA60)
-
 form <- S ~ ulceration + log(age) + log(SN_tumor_burden) + log(breslow) + no_pos_nonSNs_cat
 # form <- S ~ ulceration + log(age) + log(SN_tumor_burden) + log(breslow)
 # form <- S ~ ulceration + log(age) + SN_tumor_burden_extended + log(breslow)
-
 dd <- datadist(datCLND)
 options(datadist = 'dd')
 options(digits = 8)
-
 f.mi <- fit.mult.impute(form,
                         cph,
                         xtrans = miDataResultCLND,
@@ -1215,7 +1083,6 @@ f.mi <- fit.mult.impute(form,
                         y = TRUE,
                         x = TRUE,
                         se.fit = TRUE)
-
 cIndex <- round(mi.cindex(f.mi, miDataResultCLND)[1:4], 2)
 ```
 
@@ -1224,16 +1091,17 @@ Finally, for 5-year overall mortality the c-index is `r cIndex[1]` with a 95 per
 
 When we use the simpler EJC risk groups to assign patients to risk categories the performance drops significantly. In Table \@ref(tab:cIndexOverallModels) we give an overview of the perfomrmance regarding discrimination for the different modeling approaches considered.
 
-```{r cIndexOverallModels, echo = FALSE}
+```{r cIndexOverallModels, echo = TRUE}
 tableData <- data.frame(Models = c("EORTC prediction model", "EORTC prediction model with no nonSN's", "EORTC - simple EJC groups"),
                         Recurrence = c("0.68 (0.65 - 0.70)", "0.69 (0.67 - 0.72)", "0.61 (0.59 - 0.63)"),
                         Distant_Metastasis = c("0.70 (0.67 - 0.72)", "0.72 (0.69 - 0.74)", "0.61 (0.59 - 0.63)"),
                         Overall_Mortality = c("0.70 (0.67 - 0.73)", "0.72 (0.69 - 0.75)", "0.60 (0.58 - 0.63)"))
 kable(
   tableData, 
-  "latex",
+  # "latex",
   caption =  "C-indices for the different prediction models considered internal discrimination",
-  booktabs = TRUE)
+  booktabs = TRUE) %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed", "responsive"))
 ```
 
 # Merging data sets
@@ -1246,8 +1114,6 @@ Due to the very good performance of the developed model in the test dataset, we 
 decogData <- read.spss("./Data/DECOG.sav",
                        to.data.frame = TRUE)
 decogData$id <- 1:dim(decogData)[1] 
-
-
 selectedVariables <-c("id", "age", "sex", "simpleloc", "CLND",
                       "histology_simple", "breslow",
                       "ulceration", "SLNBdate", "no_removed_SNs", "AJCCsub_8th_SLNB_only_DV",
@@ -1255,36 +1121,26 @@ selectedVariables <-c("id", "age", "sex", "simpleloc", "CLND",
                       "SN_tumor_burden_extended", "SN_tumor_burden_simple",
                       "no_removed_nonSNs", "no_pos_nonSNs", "no_pos_nonSNs_cat",
                       "EJC_groups", "Risk_classes")
-
 outcomes <- c("status_RFS_FDA", "time_RFS", 
               "status_DMFS_FDA", "time_DMFS",
               "status_OS_FDA", "time_OS",
               "status_RFS_FDA60", "time_RFS60", 
               "status_DMFS_FDA60", "time_DMFS60",
               "status_OS_FDA60", "time_OS60")
-
 datValidation <- decogData %>%
   select(c(selectedVariables, outcomes)) %>%
   mutate(SLNBdate = spss2Date(SLNBdate))
-
 datValidation$AJCCsub_8th_SLNB_only_DV <- gsub(" ", "", gsub("-", "", gsub(",", "", datValidation$AJCCsub_8th_SLNB_only_DV)))
-
 diffNames <- c("time_RFS", "time_DMFS", "time_OS", "time_RFS60", "time_DMFS60", "time_OS60", "AJCCsub_8th_SLNB_only_DV")
 newNames <- c("timeToRecurrence", "timeToDistant","timeToFollowup", "timeToRecurrence60", "timeToDistant60", "timeToFollowup60", "AJCC_sub_SLNB_8th")
 setnames(datValidation, old = diffNames, new = newNames)
-
 datValidation$center <- "DECOG"
 datValidation$SN_tumor_burden <- datValidation$histology_extended <- datValidation$clark <- NA
-
 datMerged <- bind_rows(dat, datValidation)
 datMerged$AJCC_sub_SLNB_8th <- as.factor(datMerged$AJCC_sub_SLNB_8th)
-
-
 dd <- datadist(datMerged)
 options(datadist = 'dd')
 options(digits = 8)
-
-
 miVariables <- c("center", "age", "sex", "simpleloc", "SN_tumor_burden_extended",
                  "histology_simple","breslow", "AJCC_sub_SLNB_8th", 
                  "no_pos_SNs", "no_removed_SNs",
@@ -1293,27 +1149,21 @@ miVariables <- c("center", "age", "sex", "simpleloc", "SN_tumor_burden_extended"
                  "status_RFS_FDA", "timeToRecurrence", 
                  "status_DMFS_FDA", "timeToDistant",
                  "status_OS_FDA", "timeToFollowup")
-
 miDataMerged <- datMerged[miVariables] 
-
 miDataMerged$timeToRecurrence <- log(miDataMerged$timeToRecurrence)
 miDataMerged$timeToDistant <- log(miDataMerged$timeToDistant)
 miDataMerged$timeToFollowup <- log(miDataMerged$timeToFollowup)
-
 # miDataResultMerged <- mice(data = miDataMerged, m = 20, printFlag = FALSE)
 # saveRDS(miDataResultMerged, "miDataResultMerged.rds")
-
 miDataResultMerged <- readRDS("miDataResultMerged.rds")
 ```
 
-```{r, echo = FALSE}
+```{r, echo = TRUE}
 S <- Surv(datMerged$timeToRecurrence,
           datMerged$status_RFS_FDA)
-
 form <- S ~ sex + ulceration + no_removed_SNs + 
   no_pos_SNs + simpleloc + histology_simple  +
   rcs(breslow, 3) + rcs(SN_tumor_burden, 3) + rcs(age, 3)
-
 f.mi <- fit.mult.impute(form,
                         cph,
                         xtrans = miDataResultMerged,
@@ -1324,16 +1174,14 @@ f.mi <- fit.mult.impute(form,
                         y = TRUE,
                         x = TRUE,
                         se.fit = TRUE)
-
 # tableCount <- tableCount + 1
 # kable(round(summary(f.mi)[, c(4, 6, 7)], 2), caption = paste("Table", paste0(tableCount, ":"), "Multivariable Cox analysis of recurrence"))
 ```
 
-```{r finalRec5Merged, echo = FALSE}
+```{r finalRec5Merged, echo = TRUE}
 S <- Surv(datMerged$timeToRecurrence60,
           datMerged$status_RFS_FDA60)
 form <- S ~ ulceration + log(age) + log(SN_tumor_burden) + log(breslow)
-
 f.mi <- fit.mult.impute(form,
                         cph,
                         xtrans = miDataResultMerged,
@@ -1344,22 +1192,21 @@ f.mi <- fit.mult.impute(form,
                         y = TRUE,
                         x = TRUE,
                         se.fit = TRUE)
-
 summaryFit <- summary(f.mi)
 namesSummaryFit <- rownames(summaryFit)[seq(1, 7, 2)]
 summaryFit <- summaryFit[seq(2, 8, 2), c(4, 6, 7)]
 rownames(summaryFit) <- namesSummaryFit
 colnames(summaryFit)[1] <- "Hazard ratio"
-
 kable(round(summaryFit, 2),
-      "latex",
-      booktabs = TRUE,
-      caption = "Final model for 5-year recurrence using the merged dataset")
+      # "latex",
+      # booktabs = TRUE,
+      caption = "Final model for 5-year recurrence using the merged dataset") %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed", "responsive"))
 ```
 
 The final model for the prediction of 5-year recurrence from the merged set can be found in Table  \@ref(tab:finalRec5Merged). The c-index of that model  is `r round(mi.cindex(f.mi, miDataResultMerged)[1], 2)` (95 percent c.i. `r round(mi.cindex(f.mi, miDataResultMerged)[3], 2)` to `r round(mi.cindex(f.mi, miDataResultMerged)[4], 2)`). Calibration is assessed using a leave-one-center-out cross validation, based on the merged dataset. In this way, information from the 9 development centers of the first objective can be used to impute missing values for `SN_tumor_burden` in the German (validation) dataset. Multiple imputation is again separated between the training and the test set as was done in the original analysis. When leaving out the German dataset, because we cannot use the data from the other centers to impute the missing values, we use the approach of [External validation](#externalVal) (the same holds for the assessment of calibration in the calibrated models for distant metastasis and overall mortality). The results of this analysis can be found in Figure \@ref(fig:leave1outCalMerged) for the 5-year recurrence model, in Figure \@ref(fig:leave1outCalDistantMerged) for the 5-year distant recurrence model and in Figure \@ref(fig:leave1outCalDeathMerged) for the 5-year overall mortality model.
 
-```{r leave1outCalMerged, echo = FALSE, fig.cap="\\label{fig:leave1outCalMerged}Leave-one-center-out cross validation for prediction of recurrence in the merged dataset",fig.align = "center", fig.width = 8, fig.height = 8}
+```{r leave1outCalMerged, echo = TRUE, fig.cap="\\label{fig:leave1outCalMerged}Leave-one-center-out cross validation for prediction of recurrence in the merged dataset",fig.align = "center", fig.width = 8, fig.height = 8}
 discrimination <- list()
 centers <- unique(dat$center)
 par(mfrow=c(3, 3))
@@ -1395,7 +1242,6 @@ for(i in 1:length(centers)){
   # saveRDS(miDataResultTest, file.path(".", "miMergedCV",paste("miDataResultTest", centers[i], "rds", sep = ".")))
   
   miDataResultTest <- readRDS(file.path(".", "miMergedCV",paste("miDataResultTest", centers[i], "rds", sep = ".")))
-
   f.miTrainCenters <- fit.mult.impute(formTrainCenters,
                                       cph,
                                       xtrans = miDataResultTrain,
@@ -1469,7 +1315,7 @@ for(i in 1:length(centers)){
 
 The updated nomogram based on the combined dataset can be found in Figure  \@ref(fig:nomogramMerged).
 
-```{r nomogramMerged, echo = FALSE, fig.cap="\\label{fig:nomogramMerged}Nomogram for 5-year recurrence for the merged dataset", fig.align = "center", fig.width = 7, fig.height = 7}
+```{r nomogramMerged, echo = TRUE, fig.cap="\\label{fig:nomogramMerged}Nomogram for 5-year recurrence for the merged dataset", fig.align = "center", fig.width = 7, fig.height = 7}
 breslow.class <- c(0.1, .15, .25, .4, .6, 1, 1.5, 2.5, 4, 6, 8, 10)
 t.class <- c(.05,.1, .2, .4, .8, 1.5, 2.5, 4, 8)
 age.class <- c(25, 30, 40, 50, 60, 75)
@@ -1479,7 +1325,6 @@ nom <- nomogram(f.mi,
                 age = age.class,
                 SN_tumor_burden = t.class,
                 breslow = breslow.class)
-
 plot(nom,
      total.sep.page = FALSE,
      col.grid =gray(c(.7, .9)))
@@ -1488,14 +1333,12 @@ plot(nom,
 ## Distant metastasis
 
 
-```{r, echo = FALSE}
+```{r, echo = TRUE}
 SDistantMerged <- Surv(datMerged$timeToDistant60,
                        datMerged$status_DMFS_FDA60)
-
 form <- SDistantMerged ~ sex + ulceration + no_removed_SNs + 
   no_pos_SNs + simpleloc + histology_simple  +
   rcs(breslow, 3) + rcs(SN_tumor_burden, 3) + rcs(age, 3)
-
 f.miDistantFullMerged <- fit.mult.impute(form,
                                          cph,
                                          xtrans = miDataResultMerged,
@@ -1506,12 +1349,9 @@ f.miDistantFullMerged <- fit.mult.impute(form,
                                          y = TRUE,
                                          x = TRUE,
                                          se.fit = TRUE)
-
 SRecurrenceMerged  <- Surv(datMerged$timeToRecurrence60,
                            datMerged$status_RFS_FDA60)
-
 form <- SRecurrenceMerged ~ ulceration + log(age) + log(SN_tumor_burden) + log(breslow)
-
 f.miRecMerged <- fit.mult.impute(form,
                                  cph,
                                  xtrans = miDataResultMerged,
@@ -1523,15 +1363,12 @@ f.miRecMerged <- fit.mult.impute(form,
                                  x = TRUE,
                                  se.fit = TRUE)
 linearPredictor <- f.miRecMerged$linear
-
 dd <- datadist(linearPredictor)
 options(datadist = 'dd')
 options(digits = 8)
-
 fDistantCalibratedMerged <- cph(SDistantMerged ~ linearPredictor, 
                                 y = TRUE,
                                 x = TRUE)
-
 cIndexCalibratedMerged <- rcorr.cens(-linearPredictor*coef(fDistantCalibratedMerged), SDistantMerged)
 ```
 
@@ -1539,16 +1376,13 @@ For the assessment of distant metastasis we considered a calibrated version of t
 
 Again we perform a leave-one-center-out cross validation to assess the calibration of our final model for distant metastasis. The approach is the same as the one considered for the 5-year recurrence model (Figure \@ref(fig:leave1outCalDistantMerged)).
 
-```{r leave1outCalDistantMerged, echo = FALSE,fig.cap="\\label{fig:leave1outCalDistantMerged}Leave-one-center-out cross validation for prediction of distant metastasis in the merged dataset", fig.align = "center", fig.width = 8, fig.height = 8}
+```{r leave1outCalDistantMerged, echo = TRUE,fig.cap="\\label{fig:leave1outCalDistantMerged}Leave-one-center-out cross validation for prediction of distant metastasis in the merged dataset", fig.align = "center", fig.width = 8, fig.height = 8}
 SRecurrence  <- Surv(datMerged$timeToRecurrence60,
                      datMerged$status_RFS_FDA60)
-
 form <- SRecurrence ~ ulceration + log(age) + log(SN_tumor_burden) + log(breslow)
-
 discrimination <- list()
 centers <- unique(dat$center)
 par(mfrow=c(3,3))
-
 for(i in 1:length(centers)){
   
   datTrainCenters <- subset(datMerged, center != centers[i])
@@ -1657,14 +1491,12 @@ for(i in 1:length(centers)){
 
 ## Overall mortality
 
-```{r, echo = FALSE}
+```{r, echo = TRUE}
 SDeathMerged <- Surv(datMerged$timeToFollowup60,
                      datMerged$status_OS_FDA60)
-
 form <- SDeathMerged ~ sex + ulceration + no_removed_SNs + 
   no_pos_SNs + simpleloc + histology_simple  +
   rcs(breslow, 3) + rcs(SN_tumor_burden, 3) + rcs(age, 3)
-
 f.miDeathFullMerged <- fit.mult.impute(form,
                                        cph,
                                        xtrans = miDataResultMerged,
@@ -1675,12 +1507,9 @@ f.miDeathFullMerged <- fit.mult.impute(form,
                                        y = TRUE,
                                        x = TRUE,
                                        se.fit = TRUE)
-
 SRecurrence  <- Surv(datMerged$timeToRecurrence60,
                      datMerged$status_RFS_FDA60)
-
 form <- SRecurrence ~ ulceration + log(age) + log(SN_tumor_burden) + log(breslow)
-
 f.miRecMerged <- fit.mult.impute(form,
                                  cph,
                                  xtrans = miDataResultMerged,
@@ -1692,15 +1521,12 @@ f.miRecMerged <- fit.mult.impute(form,
                                  x = TRUE,
                                  se.fit = TRUE)
 linearPredictor <- f.miRecMerged$linear
-
 dd <- datadist(linearPredictor)
 options(datadist = 'dd')
 options(digits = 8)
-
 fDeathCalibratedMerged <- cph(SDeathMerged ~ linearPredictor, 
                               y = TRUE,
                               x = TRUE)
-
 cIndexCalibratedMerged <- rcorr.cens(-linearPredictor*coef(fDeathCalibratedMerged), SDeathMerged)
 ```
 
@@ -1708,12 +1534,10 @@ For the assessment 5-year overall mortality in the merged dataset we considered 
 
 The results of leave-one-center-out cross validation can be found in Figure \@ref(fig:leave1outCalDeathMerged).
 
-```{r leave1outCalDeathMerged, echo = FALSE,fig.cap="\\label{fig:leave1outCalDeathMerged}Leave-one-center-out cross validation for prediction of overall mortality in the merged dataset", fig.align = "center", fig.width = 8, fig.height = 8}
+```{r leave1outCalDeathMerged, echo = TRUE,fig.cap="\\label{fig:leave1outCalDeathMerged}Leave-one-center-out cross validation for prediction of overall mortality in the merged dataset", fig.align = "center", fig.width = 8, fig.height = 8}
 SRecurrence  <- Surv(dat$timeToRecurrence60,
                      dat$status_RFS_FDA60)
-
 form <- SRecurrence ~ ulceration + log(age) + log(SN_tumor_burden) + log(breslow)
-
 discrimination <- list()
 centers <- unique(dat$center)
 par(mfrow=c(3,3))
@@ -1822,25 +1646,20 @@ for(i in 1:length(centers)){
 }
 ```
 
-```{r, echo = FALSE}
+```{r, echo = TRUE}
 dat.complete <- complete(miDataResultMerged, 1)
 breslowTrunc <- dat.complete$breslow
 breslowTrunc[dat.complete$breslow < .2] <- .2
 breslowTrunc[dat.complete$breslow > 10] <- 10
-
 SN_tumor_burdenTrunc <- dat.complete$SN_tumor_burden
 SN_tumor_burdenTrunc[dat.complete$SN_tumor_burden < .2] <- .2
 SN_tumor_burdenTrunc[dat.complete$SN_tumor_burden > 7] <- 7
-
 ageTrunc <- dat.complete$age
 ageTrunc[dat.complete$age < 10] <- 10
 ageTrunc[dat.complete$age > 70] <- 70
-
 SRecurrence  <- Surv(datMerged$timeToRecurrence60,
                      datMerged$status_RFS_FDA60)
-
 form <- SRecurrence ~ ulceration + log(age) + log(SN_tumor_burden) + log(breslow)
-
 f.miRec <- fit.mult.impute(form,
                            cph,
                            xtrans = miDataResultMerged,
@@ -1851,32 +1670,26 @@ f.miRec <- fit.mult.impute(form,
                            y = TRUE,
                            x = TRUE,
                            se.fit = TRUE)
-
 SDistant <- Surv(datMerged$timeToDistant60,
                  datMerged$status_DMFS_FDA60)
 lp <- f.miRec$linear
 fDistant <- cph(SDistant ~ lp, 
-             y = TRUE,
-             x = TRUE)
-
+                y = TRUE,
+                x = TRUE)
 SDeath <- Surv(datMerged$timeToFollowup60, 
                datMerged$status_OS_FDA60)
 fDeath <- cph(SDeath ~ lp,
               y = TRUE, 
               x = TRUE)
-
 baseHazRec <- basehaz(f.miRec)
 baseHazDistant <- basehaz(fDistant)
 baseHazDeath <- basehaz(fDeath)
 baseSurv <- estimtateBaselineSurvival(baseHazRec, 60)
 baseSurvDistant <- estimtateBaselineSurvival(baseHazDistant, 60)
 baseSurvDeath <- estimtateBaselineSurvival(baseHazDeath, 60)
-
-
 interceptNom <- attr(nom, "info")$Intercept
 pointwiseIncrease <- 1/attr(nom, "info")$sc
 points <- 0:21
-
 lp.score<-predict(f.miRec,
                   newdata=data.frame(ulceration=dat.complete$ulceration,
                                      age=ageTrunc,
@@ -1887,14 +1700,12 @@ h <- hist(score,
           plot = FALSE,
           breaks = 0:22,
           right = FALSE)
-
 recPoints <- interceptNom + pointwiseIncrease*points
 distantPoints <- coef(fDistant)*(interceptNom + pointwiseIncrease*points)
 deathPoints <- coef(fDeath)*(interceptNom + pointwiseIncrease*points)
 recProbs <- 1 - baseSurv^exp(recPoints)
 distantProbs <- 1 - baseSurvDistant^exp(distantPoints)
 deathProbs <- 1 - baseSurvDeath^exp(deathPoints)
-
 pointsToProbs <- data.frame(points = points,
                             recProbs = recProbs*100,
                             distantProbs = distantProbs*100,
@@ -1904,14 +1715,12 @@ pointsToProbs$riskLevel <- c(rep(1, 9),
                              rep(2, 4),
                              rep(3, 3),
                              rep(4, 6))
-
 pointsToProbs$riskLevel <- factor(pointsToProbs$riskLevel, labels = c(" < 25%", " 25-50%", " 50-75%", " > 75%"))
-
 ```
 
 The combined results regarding the calibrated models for 5-year distant recurrence and 5-year overall mortality along with the predictions from the 5-year recurrence model can be found in Figure \@ref(fig:combinedPlotMerged).
 
-```{r combinedPlotMerged, echo = FALSE, fig.cap="\\label{fig:combinedPlotMerged}Absolute risks along with risk distribution using the merged dataset",fig.align = "center", fig.width = 8.5, fig.height = 7}
+```{r combinedPlotMerged, echo = TRUE, fig.cap="\\label{fig:combinedPlotMerged}Absolute risks along with risk distribution using the merged dataset",fig.align = "center", fig.width = 8.5, fig.height = 7}
 ggplot(data = pointsToProbs, aes(x = points)) +
   geom_bar(mapping = aes(x = points, y = hist*4, fill = factor(riskLevel)),
            stat = "identity",
@@ -1941,3 +1750,356 @@ cIndexRec <- cIndexEJC(miDataResult, dat, "timeToRecurrence60", "status_RFS_FDA6
 cIndexDistant <- cIndexEJC(miDataResult, dat, "timeToDistant60", "status_DMFS_FDA60")
 cIndexDeath <- cIndexEJC(miDataResult, dat, "timeToFollowup60", "status_OS_FDA60")
 ```
+
+# Reviewer comments
+
+## Simple risk subgroups
+
+```{r, echo = FALSE}
+newData <- subset(dat, !is.na(dat$EJC_groups))
+SRec <- Surv(dat$timeToRecurrence60,
+          dat$status_RFS_FDA60)
+form <- SRec ~ EJC_groups
+f.miSimpleRec <- fit.mult.impute(form,
+                              cph,
+                              xtrans = miDataResult,
+                              data = miData,
+                              n.impute = 20,
+                              pr = FALSE,
+                              fit.reps = TRUE,
+                              y = TRUE,
+                              x = TRUE,
+                              se.fit = TRUE)
+
+runSurvEstimation <- survest(f.miSimpleRec,
+                          newdata = data.frame(EJC_groups = unique(newData$EJC_groups)), times = 60)
+resSimpleRec <- data.frame(EJC_groups = unique(newData$EJC_groups), 
+                              surv = runSurvEstimation$surv, 
+                              lower = runSurvEstimation$lower, 
+                              upper = runSurvEstimation$upper) %>%
+  arrange(EJC_groups)
+
+
+
+SDistant <- Surv(dat$timeToDistant60,
+                 dat$status_DMFS_FDA60)
+form <- SDistant ~ EJC_groups
+f.miSimpleDistant <- fit.mult.impute(form,
+                              cph,
+                              xtrans = miDataResult,
+                              data = miData,
+                              n.impute = 20,
+                              pr = FALSE,
+                              fit.reps = TRUE,
+                              y = TRUE,
+                              x = TRUE,
+                              se.fit = TRUE)
+
+runSurvEstimation <- survest(f.miSimpleDistant,
+                          newdata = data.frame(EJC_groups = unique(newData$EJC_groups)), times = 60)
+resSimpleDistant <- data.frame(EJC_groups = unique(newData$EJC_groups), 
+                              surv = runSurvEstimation$surv, 
+                              lower = runSurvEstimation$lower, 
+                              upper = runSurvEstimation$upper) %>%
+  arrange(EJC_groups)
+
+SDeath <- Surv(dat$timeToFollowup60, 
+               dat$status_OS_FDA60)
+form <- SDeath ~ EJC_groups
+f.miSimpleDeath <- fit.mult.impute(form,
+                                   cph,
+                                   xtrans = miDataResult,
+                                   data = miData,
+                                   n.impute = 20,
+                                   pr = FALSE,
+                                   fit.reps = TRUE,
+                                   y = TRUE,
+                                   x = TRUE,
+                                   se.fit = TRUE)
+
+runSurvEstimation <- survest(f.miSimpleRec,
+                          newdata = data.frame(EJC_groups = unique(newData$EJC_groups)), times = 60)
+resSimpleDeath <- data.frame(EJC_groups = unique(newData$EJC_groups), 
+                              surv = runSurvEstimation$surv, 
+                              lower = runSurvEstimation$lower, 
+                              upper = runSurvEstimation$upper) %>%
+  arrange(EJC_groups)
+
+kable(resSimpleRec %>%
+        mutate(surv = round(surv, 2),
+               lower = round(lower, 2),
+               upper = round(upper, 2)), 
+      caption = "5-year recurrence-free survival with EJC subgroups") %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed", "responsive"))
+kable(resSimpleDistant %>%
+        mutate(surv = round(surv, 2),
+               lower = round(lower, 2),
+               upper = round(upper, 2)),
+      caption = "5-year distant metastasis free survival with EJC subgroups") %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed", "responsive"))
+kable(resSimpleDeath %>%
+        mutate(surv = round(surv, 2),
+               lower = round(lower, 2),
+               upper = round(upper, 2)),
+      caption = "5-year overall survival with EJC subgroups") %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed", "responsive"))
+
+```
+
+## AJCC classifications
+```{r, echo = TRUE}
+
+eortcData <- read.spss("./Data/EORTC_CLEAN.sav",
+                       to.data.frame = TRUE)
+eortcData$id <- 1:dim(eortcData)[1] 
+## Set dates 1582-10-14 to NA
+eortcData$Date_dist_met <- ifelse(eortcData$Date_dist_met == 0, NA, eortcData$Date_dist_met)
+eortcData$first_rec <- ifelse(eortcData$first_rec == 0, NA, eortcData$first_rec)
+## Transform into dates and create new times to event
+eortcData <- eortcData %>%
+  mutate(last_FU = spss2Date(last_FU), 
+         SLNBdate = spss2Date(SLNBdate),
+         first_rec = spss2Date(first_rec),
+         Date_dist_met = spss2Date(Date_dist_met),
+         recurrence = ifelse(recurrence == "yes", 1, 0)) 
+## problematic observations -> typos with dates could be the reason
+eortcData[eortcData$id == 344, ]$last_FU <- eortcData[eortcData$id == 344, ]$Date_dist_met
+eortcData[eortcData$id == 926, ]$first_rec <- eortcData[eortcData$id == 926, ]$Date_dist_met <- eortcData[eortcData$id == 926, ]$last_FU
+eortcData[eortcData$id == 1042, ]$first_rec <- eortcData[eortcData$id == 1042, ]$Date_dist_met <- eortcData[eortcData$id == 1042, ]$last_FU
+eortcData <- eortcData %>%
+  mutate(timeToFollowup = as.numeric((last_FU - SLNBdate)/30.5),
+         timeToRecurrence = as.numeric((first_rec - SLNBdate)/30.5),
+         timeToDistant = as.numeric(Date_dist_met - SLNBdate)/30.5)
+eortcData$timeToRecurrence <- ifelse(is.na(eortcData$timeToRecurrence),
+                                     as.numeric(eortcData$last_FU - eortcData$SLNBdate)/30.5,
+                                     eortcData$timeToRecurrence)
+eortcData$timeToDistant <- ifelse(is.na(eortcData$timeToDistant),
+                                  as.numeric(eortcData$last_FU - eortcData$SLNBdate)/30.5,
+                                  eortcData$timeToDistant)
+eortcData$clark <- factor(eortcData$clark,
+                          levels = c("ii", "iii", "iv", "v")) # dropping declared levels "i" and "unknown" that are never encountered
+## exclude weird observations
+eortcData <- eortcData %>%
+  filter(!(id %in% c(7, 310, 863)))
+# glimpse(eortcData)
+##################################
+# Extract data
+##################################
+selectedVariables <-c("id", "center", "age", "sex", "simpleloc", "clark", "CLND",
+                      "histology_simple", "histology_extended", "breslow",
+                      "ulceration", "SLNBdate", "no_removed_SNs", "AJCC_sub_SLNB_8th",
+                      "no_pos_SNs", "no_pos_SNs_cat", "SN_tumor_burden",
+                      "SN_tumor_burden_extended", "SN_tumor_burden_simple",
+                      "no_removed_nonSNs", "no_pos_nonSNs", "no_pos_nonSNs_cat",
+                      "EJC_groups", "Risk_classes", "AJCC_7th_extra", "AJCC_8th_extra")
+outcomes <- c("status_RFS_FDA", "timeToRecurrence", 
+              "status_DMFS_FDA", "timeToDistant",
+              "status_OS_FDA", "timeToFollowup",
+              "status_RFS_FDA60", "status_DMFS_FDA60",
+              "status_OS_FDA60")
+statusOutcomesoutcomes <- c("status_RFS_FDA", 
+                            "status_DMFS_FDA", 
+                            "status_OS_FDA")
+dat <- eortcData %>%
+  select(c(selectedVariables, outcomes))
+dat$AJCC_sub_SLNB_8th <- gsub(" ", "", dat$AJCC_sub_SLNB_8th)
+dat$timeToRecurrence60 <- ifelse(eortcData$timeToRecurrence < 60, 
+                                 eortcData$timeToRecurrence,
+                                 60)
+dat$timeToDistant60 <- ifelse(eortcData$timeToDistant < 60,
+                              eortcData$timeToDistant,
+                              60)
+dat$timeToFollowup60 <- ifelse(eortcData$timeToFollowup < 60,
+                               eortcData$timeToFollowup,
+                               60)
+
+newData <- subset(dat, !is.na(AJCC_7th_extra))
+cIndexAJCC_7th_Rec <- cIndexAJCC_7th(data = newData,
+                                     timeToOutcome = "timeToRecurrence60",
+                                     outcomeStatus = "status_RFS_FDA60")
+cIndexAJCC_7th_Distant <- cIndexAJCC_7th(data = newData,
+                                     timeToOutcome = "timeToRecurrence60",
+                                     outcomeStatus = "status_DMFS_FDA60")
+cIndexAJCC_7th_Death <- cIndexAJCC_7th(data = newData,
+                                     timeToOutcome = "timeToFollowup",
+                                     outcomeStatus = "status_OS_FDA60")
+
+newData <- subset(dat, !is.na(AJCC_8th_extra))
+cIndexAJCC_8th_Rec <- cIndexAJCC_8th(data = newData,
+                                     timeToOutcome = "timeToRecurrence60",
+                                     outcomeStatus = "status_RFS_FDA60")
+cIndexAJCC_8th_Distant <- cIndexAJCC_8th(data = newData,
+                                     timeToOutcome = "timeToRecurrence60",
+                                     outcomeStatus = "status_DMFS_FDA60")
+cIndexAJCC_8th_Death <- cIndexAJCC_8th(data = newData,
+                                     timeToOutcome = "timeToFollowup",
+                                     outcomeStatus = "status_OS_FDA60")
+
+
+
+
+```
+
+Estimating probabilities of AJCC 7th subgroups
+
+```{r, echo = TRUE}
+newData <- subset(dat, !is.na(AJCC_7th_extra))
+SRec <- Surv(newData$timeToRecurrence60,
+          newData$status_RFS_FDA60)
+form <- SRec ~ AJCC_7th_extra
+f.AJCC_7th_Rec <- cph(formula = form,
+                      data = newData,
+                      x = TRUE,
+                      y = TRUE)
+
+runSurvEstimation <- survest(f.AJCC_7th_Rec,
+                          newdata = data.frame(AJCC_7th_extra = unique(newData$AJCC_7th_extra)), times = 60)
+resAJCC_7th_Rec <- data.frame(AJCC_7th_extra = unique(newData$AJCC_7th_extra), 
+                              surv = runSurvEstimation$surv, 
+                              lower = runSurvEstimation$lower, 
+                              upper = runSurvEstimation$upper) %>%
+  arrange(AJCC_7th_extra)
+
+
+
+
+# Distant metastasis
+
+SDistant <- Surv(newData$timeToDistant60,
+          newData$status_DMFS_FDA60)
+form <- SDistant ~ AJCC_7th_extra
+f.AJCC_7th_Distant <- cph(formula = form,
+                      data = newData,
+                      x = TRUE,
+                      y = TRUE)
+
+runSurvEstimation <- survest(f.AJCC_7th_Distant,
+                          newdata = data.frame(AJCC_7th_extra = unique(newData$AJCC_7th_extra)), times = 60)
+resAJCC_7th_Distant <- data.frame(AJCC_7th_extra = unique(newData$AJCC_7th_extra), 
+                              surv = runSurvEstimation$surv, 
+                              lower = runSurvEstimation$lower, 
+                              upper = runSurvEstimation$upper) %>%
+  arrange(AJCC_7th_extra)
+
+
+
+
+
+# Overall survival
+SDeath <- Surv(newData$timeToFollowup60,
+          newData$status_OS_FDA60)
+form <- SDeath ~ AJCC_7th_extra
+f.AJCC_7th_Death <- cph(formula = form,
+                      data = newData,
+                      x = TRUE,
+                      y = TRUE)
+
+runSurvEstimation <- survest(f.AJCC_7th_Death,
+                          newdata = data.frame(AJCC_7th_extra = unique(newData$AJCC_7th_extra)), times = 60)
+resAJCC_7th_Death <- data.frame(AJCC_7th_extra = unique(newData$AJCC_7th_extra), 
+                              surv = runSurvEstimation$surv, 
+                              lower = runSurvEstimation$lower, 
+                              upper = runSurvEstimation$upper) %>%
+  arrange(AJCC_7th_extra)
+```
+
+Estimating probabilities of AJC8 7th subgroups
+
+```{r, echo = TRUE}
+newData <- subset(dat, !is.na(AJCC_8th_extra))
+SRec <- Surv(newData$timeToRecurrence60,
+             newData$status_RFS_FDA60)
+form <- SRec ~ AJCC_8th_extra
+f.AJCC_8th_Rec <- cph(formula = form,
+                      data = newData,
+                      x = TRUE,
+                      y = TRUE)
+
+runSurvEstimation <- survest(f.AJCC_8th_Rec,
+                          newdata = data.frame(AJCC_8th_extra = unique(newData$AJCC_8th_extra)), times = 60)
+resAJCC_8th_Rec <- data.frame(AJCC_8th_extra = unique(newData$AJCC_8th_extra), 
+                              surv = runSurvEstimation$surv, 
+                              lower = runSurvEstimation$lower, 
+                              upper = runSurvEstimation$upper) %>%
+  arrange(AJCC_8th_extra)
+
+
+
+# Distant metastasis
+
+SDistant <- Surv(newData$timeToDistant60,
+                 newData$status_DMFS_FDA60)
+form <- SDistant ~ AJCC_8th_extra
+f.AJCC_8th_Distant <- cph(formula = form,
+                          data = newData,
+                          x = TRUE,
+                          y = TRUE)
+
+runSurvEstimation <- survest(f.AJCC_8th_Distant,
+                          newdata = data.frame(AJCC_8th_extra = unique(newData$AJCC_8th_extra)), times = 60)
+resAJCC_8th_Distant <- data.frame(AJCC_8th_extra = unique(newData$AJCC_8th_extra), 
+                              surv = runSurvEstimation$surv, 
+                              lower = runSurvEstimation$lower, 
+                              upper = runSurvEstimation$upper) %>%
+  arrange(AJCC_8th_extra)
+
+
+
+
+# Overall survival
+SDeath <- Surv(newData$timeToFollowup60,
+               newData$status_OS_FDA60)
+form <- SDeath ~ AJCC_8th_extra
+f.AJCC_8th_Death <- cph(formula = form,
+                        data = newData,
+                        x = TRUE,
+                        y = TRUE)
+
+runSurvEstimation <- survest(f.AJCC_8th_Death,
+                          newdata = data.frame(AJCC_8th_extra = unique(newData$AJCC_8th_extra)), times = 60)
+resAJCC_8th_Death <- data.frame(AJCC_8th_extra = unique(newData$AJCC_8th_extra), 
+                              surv = runSurvEstimation$surv, 
+                              lower = runSurvEstimation$lower, 
+                              upper = runSurvEstimation$upper) %>%
+  arrange(AJCC_8th_extra)
+
+kable(resAJCC_7th_Rec %>%
+        mutate(surv = round(surv, 2),
+               lower = round(lower, 2),
+               upper = round(upper, 2)),
+      caption = "5-year recurrence-free survival with AJCC-7th subgroups") %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed", "responsive"))
+kable(resAJCC_7th_Distant %>%
+        mutate(surv = round(surv, 2),
+               lower = round(lower, 2),
+               upper = round(upper, 2)),
+      caption = "5-year distant metastasis free survival with AJCC-7th subgroups") %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed", "responsive"))
+kable(resAJCC_7th_Death %>%
+        mutate(surv = round(surv, 2),
+               lower = round(lower, 2),
+               upper = round(upper, 2)),
+      caption = "5-year overall survival with AJCC-7th subgroups") %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed", "responsive"))
+
+kable(resAJCC_8th_Rec %>%
+        mutate(surv = round(surv, 2),
+               lower = round(lower, 2),
+               upper = round(upper, 2)),
+      caption = "5-year recurrence-free survival with AJCC-8th subgroups") %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed", "responsive"))
+kable(resAJCC_8th_Distant %>%
+        mutate(surv = round(surv, 2),
+               lower = round(lower, 2),
+               upper = round(upper, 2)),
+      caption = "5-year distant metastasis free survival with AJCC-8th subgroups") %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed", "responsive"))
+kable(resAJCC_8th_Death %>%
+        mutate(surv = round(surv, 2),
+               lower = round(lower, 2),
+               upper = round(upper, 2)),
+      caption = "5-year overall survival with AJCC-8th subgroups") %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed", "responsive"))
+
+```
+

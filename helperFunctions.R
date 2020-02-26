@@ -17,6 +17,36 @@ mi.cindex <- function(f.mi,
   
 }
 
+cIndexAJCC_7th <- function(data, timeToOutcome, outcomeStatus){
+  
+  data$new <- 0
+  data[data$AJCC_7th_extra == levels(data$AJCC_7th_extra)[1], ]$new <- 1
+  data[data$AJCC_7th_extra == levels(data$AJCC_7th_extra)[2], ]$new <- 2
+  data[data$AJCC_7th_extra == levels(data$AJCC_7th_extra)[3], ]$new <- 3
+  data[data$AJCC_7th_extra == levels(data$AJCC_7th_extra)[4], ]$new <- 4
+  rc <- Hmisc::rcorr.cens(-as.numeric(data$new),
+                          Surv(unlist(data[timeToOutcome]), unlist(data[outcomeStatus])))
+
+  cIndex <-  c(rc["C Index"], rc["S.D."]/2)
+  
+  return(cIndex)
+}
+cIndexAJCC_8th <- function(data, timeToOutcome, outcomeStatus){
+  
+  data$new <- 0
+  data[data$AJCC_8th_extra == levels(data$AJCC_8th_extra)[1], ]$new <- 1
+  data[data$AJCC_8th_extra == levels(data$AJCC_8th_extra)[2], ]$new <- 2
+  data[data$AJCC_8th_extra == levels(data$AJCC_8th_extra)[3], ]$new <- 3
+  data[data$AJCC_8th_extra == levels(data$AJCC_8th_extra)[4], ]$new <- 4
+  data[data$AJCC_8th_extra == levels(data$AJCC_8th_extra)[5], ]$new <- 5
+  rc <- Hmisc::rcorr.cens(-as.numeric(data$new),
+                          Surv(unlist(data[timeToOutcome]), unlist(data[outcomeStatus])))
+
+  cIndex <-  c(rc["C Index"], rc["S.D."]/2)
+  
+  return(cIndex)
+}
+
 cIndexEJC <- function(miDataResult, data, timeToOutcome, outcomeStatus){
   
   cindex <- NULL
@@ -38,13 +68,13 @@ cIndexEJC <- function(miDataResult, data, timeToOutcome, outcomeStatus){
   summary(mitools::MIcombine(as.list(cindex[,1]),as.list(cindex[,2]^2)))
   
 }
-  
-  
-  
+
+
+
 # S(t|x) = S0(t)^exp(lp) ; S0(t) = exp(-Lambda0(t))
 
 estimtateBaselineSurvival <- function(baselineHazard, 
-                                timePoint){
+                                      timePoint){
   
   baselineHazard <- subset(baselineHazard, time <= timePoint)
   maxTimeLocation <- dim(baselineHazard)[1]
@@ -141,3 +171,32 @@ validateOnDecog <- function(fTraining, fTest, survValidation, miDataResultValida
 }
 
 
+# runSurvEstimation <- survest(f.miRec, newdata = dat, times = 60)
+# test <- data.frame(surv = 1 - runSurvEstimation$surv)
+# test <- cbind(dat, test) %>%
+#   mutate(riskSubgroup = cut(surv, c(0, .25, .5 , .75, 1)))
+# 
+# kaplanMeier <- survfit(Surv(timeToRecurrence, status_RFS_FDA) ~ riskSubgroup, data = test)
+# pp <- summary(kaplanMeier, times = 60)
+# 
+# data.frame(riskGroup = pp$strata,
+#            P = 1 - pp$surv,
+#            lower = 1 - pp$upper,
+#            upper = 1 - pp$lower)
+# 
+# kaplanMeierDistant <- survfit(Surv(timeToDistant, status_DMFS_FDA) ~ riskSubgroup, data = test)
+# pp <- summary(kaplanMeierDistant, times = 60)
+# 
+# data.frame(riskGroup = pp$strata,
+#            P = 1 - pp$surv,
+#            lower = 1 - pp$upper,
+#            upper = 1 - pp$lower)
+# 
+# 
+# kaplanMeierDeath <- survfit(Surv(timeToFollowup, status_OS_FDA) ~ riskSubgroup, data = test)
+# pp <- summary(kaplanMeierDeath, times = 60)
+# 
+# data.frame(riskGroup = pp$strata,
+#            P = 1 - pp$surv,
+#            lower = 1 - pp$upper,
+#            upper = 1 - pp$lower)

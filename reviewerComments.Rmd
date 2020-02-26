@@ -1,0 +1,703 @@
+---
+title: "Reviewer comments"
+output: 
+  bookdown::html_document2:
+    keep_md: true
+    code_folding: hide
+---
+
+
+```{r include = FALSE}
+library(foreign)
+library(dplyr)
+library(naniar)
+library(mice)
+library(survival)
+library(rms)
+library(mitools)
+library(knitr)
+library(data.table)
+library(kableExtra)
+source('./helperFunctions.R')
+spss2Date <- function(x) as.Date(x/86400, origin = "1582-10-14") # converts spss date to r date
+tableCount <- 0
+figureCount <- 0
+##################################
+# Read data
+##################################
+eortcData <- read.spss("./Data/EORTC.sav",
+                       to.data.frame = TRUE)
+eortcData$id <- 1:dim(eortcData)[1] 
+## Set dates 1582-10-14 to NA
+eortcData$Date_dist_met <- ifelse(eortcData$Date_dist_met == 0, NA, eortcData$Date_dist_met)
+eortcData$first_rec <- ifelse(eortcData$first_rec == 0, NA, eortcData$first_rec)
+## Transform into dates and create new times to event
+eortcData <- eortcData %>%
+  mutate(last_FU = spss2Date(last_FU), 
+         SLNBdate = spss2Date(SLNBdate),
+         first_rec = spss2Date(first_rec),
+         Date_dist_met = spss2Date(Date_dist_met),
+         recurrence = ifelse(recurrence == "yes", 1, 0)) 
+## problematic observations -> typos with dates could be the reason
+eortcData[eortcData$id == 344, ]$last_FU <- eortcData[eortcData$id == 344, ]$Date_dist_met
+eortcData[eortcData$id == 926, ]$first_rec <- eortcData[eortcData$id == 926, ]$Date_dist_met <- eortcData[eortcData$id == 926, ]$last_FU
+eortcData[eortcData$id == 1042, ]$first_rec <- eortcData[eortcData$id == 1042, ]$Date_dist_met <- eortcData[eortcData$id == 1042, ]$last_FU
+eortcData <- eortcData %>%
+  mutate(timeToFollowup = as.numeric((last_FU - SLNBdate)/30.5),
+         timeToRecurrence = as.numeric((first_rec - SLNBdate)/30.5),
+         timeToDistant = as.numeric(Date_dist_met - SLNBdate)/30.5)
+eortcData$timeToRecurrence <- ifelse(is.na(eortcData$timeToRecurrence),
+                                     as.numeric(eortcData$last_FU - eortcData$SLNBdate)/30.5,
+                                     eortcData$timeToRecurrence)
+eortcData$timeToDistant <- ifelse(is.na(eortcData$timeToDistant),
+                                  as.numeric(eortcData$last_FU - eortcData$SLNBdate)/30.5,
+                                  eortcData$timeToDistant)
+eortcData$clark <- factor(eortcData$clark,
+                          levels = c("ii", "iii", "iv", "v")) # dropping declared levels "i" and "unknown" that are never encountered
+## exclude weird observations
+eortcData <- eortcData %>%
+  filter(!(id %in% c(7, 310, 863)))
+# glimpse(eortcData)
+##################################
+# Extract data
+##################################
+selectedVariables <-c("id", "center", "age", "sex", "simpleloc", "clark", "CLND",
+                      "histology_simple", "histology_extended", "breslow",
+                      "ulceration", "SLNBdate", "no_removed_SNs", "AJCC_sub_SLNB_8th",
+                      "no_pos_SNs", "no_pos_SNs_cat", "SN_tumor_burden",
+                      "SN_tumor_burden_extended", "SN_tumor_burden_simple",
+                      "no_removed_nonSNs", "no_pos_nonSNs", "no_pos_nonSNs_cat",
+                      "EJC_groups", "Risk_classes")
+outcomes <- c("status_RFS_FDA", "timeToRecurrence", 
+              "status_DMFS_FDA", "timeToDistant",
+              "status_OS_FDA", "timeToFollowup",
+              "status_RFS_FDA60", "status_DMFS_FDA60",
+              "status_OS_FDA60")
+statusOutcomesoutcomes <- c("status_RFS_FDA", 
+                            "status_DMFS_FDA", 
+                            "status_OS_FDA")
+dat <- eortcData %>%
+  select(c(selectedVariables, outcomes))
+dat$AJCC_sub_SLNB_8th <- gsub(" ", "", dat$AJCC_sub_SLNB_8th)
+dat$timeToRecurrence60 <- ifelse(eortcData$timeToRecurrence < 60, 
+                                 eortcData$timeToRecurrence,
+                                 60)
+dat$timeToDistant60 <- ifelse(eortcData$timeToDistant < 60,
+                              eortcData$timeToDistant,
+                              60)
+dat$timeToFollowup60 <- ifelse(eortcData$timeToFollowup < 60,
+                               eortcData$timeToFollowup,
+                               60)
+```
+
+```{r, echo = TRUE}
+dd <- datadist(dat)
+options(datadist = 'dd')
+options(digits = 8)
+miVariables <- c("center", "age", "sex", "simpleloc", "SN_tumor_burden_extended",
+                 "histology_simple","breslow", "AJCC_sub_SLNB_8th", 
+                 "no_pos_SNs", "no_removed_SNs", "EJC_groups",
+                 "ulceration", "SLNBdate",
+                 "SN_tumor_burden", "no_removed_nonSNs",
+                 "status_RFS_FDA", "timeToRecurrence", 
+                 "status_DMFS_FDA", "timeToDistant",
+                 "status_OS_FDA", "timeToFollowup")
+miData <- dat[miVariables] 
+miData$timeToRecurrence <- log(miData$timeToRecurrence)
+miData$timeToDistant <- log(miData$timeToDistant)
+miData$timeToFollowup <- log(miData$timeToFollowup)
+# multiple imputations
+# miDataResult <- mice(data = miData, m = 20)
+# saveRDS(miDataResult, file = "miDataResult.rds")
+miDataResult <- readRDS("miDataResult.rds")
+```
+
+
+# Simple risk subgroups
+
+```{r, echo = FALSE}
+newData <- subset(dat, !is.na(dat$EJC_groups))
+SRec <- Surv(dat$timeToRecurrence60,
+             dat$status_RFS_FDA60)
+form <- SRec ~ EJC_groups
+f.miSimpleRec <- fit.mult.impute(form,
+                                 cph,
+                                 xtrans = miDataResult,
+                                 data = miData,
+                                 n.impute = 20,
+                                 pr = FALSE,
+                                 fit.reps = TRUE,
+                                 y = TRUE,
+                                 x = TRUE,
+                                 se.fit = TRUE)
+
+runSurvEstimation <- survest(f.miSimpleRec,
+                             newdata = data.frame(EJC_groups = unique(newData$EJC_groups)), times = 60)
+resSimpleRec <- data.frame(EJC_groups = unique(newData$EJC_groups), 
+                           probability = 1 - runSurvEstimation$surv, 
+                           lower = 1 - runSurvEstimation$upper, 
+                           upper = 1 - runSurvEstimation$lower) %>%
+  arrange(EJC_groups)
+
+
+
+SDistant <- Surv(dat$timeToDistant60,
+                 dat$status_DMFS_FDA60)
+form <- SDistant ~ EJC_groups
+f.miSimpleDistant <- fit.mult.impute(form,
+                                     cph,
+                                     xtrans = miDataResult,
+                                     data = miData,
+                                     n.impute = 20,
+                                     pr = FALSE,
+                                     fit.reps = TRUE,
+                                     y = TRUE,
+                                     x = TRUE,
+                                     se.fit = TRUE)
+
+runSurvEstimation <- survest(f.miSimpleDistant,
+                             newdata = data.frame(EJC_groups = unique(newData$EJC_groups)), times = 60)
+resSimpleDistant <- data.frame(EJC_groups = unique(newData$EJC_groups), 
+                               probability = 1 - runSurvEstimation$surv, 
+                               lower = 1 - runSurvEstimation$upper, 
+                               upper = 1 - runSurvEstimation$lower) %>%
+  arrange(EJC_groups)
+
+SDeath <- Surv(dat$timeToFollowup60, 
+               dat$status_OS_FDA60)
+form <- SDeath ~ EJC_groups
+f.miSimpleDeath <- fit.mult.impute(form,
+                                   cph,
+                                   xtrans = miDataResult,
+                                   data = miData,
+                                   n.impute = 20,
+                                   pr = FALSE,
+                                   fit.reps = TRUE,
+                                   y = TRUE,
+                                   x = TRUE,
+                                   se.fit = TRUE)
+
+runSurvEstimation <- survest(f.miSimpleDeath,
+                             newdata = data.frame(EJC_groups = unique(newData$EJC_groups)), times = 60)
+resSimpleDeath <- data.frame(EJC_groups = unique(newData$EJC_groups), 
+                             probability = 1 - runSurvEstimation$surv, 
+                             lower = 1 - runSurvEstimation$upper, 
+                             upper = 1 - runSurvEstimation$lower) %>%
+  arrange(EJC_groups)
+```
+
+```{r, echo = TRUE}
+
+kable(resSimpleRec %>%
+        mutate(probability = round(probability, 2),
+               lower = round(lower, 2),
+               upper = round(upper, 2)), 
+      caption = "5-year recurrence probability with EJC subgroups") %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed", "responsive"))
+```
+
+```{r, echo = TRUE}
+kable(resSimpleDistant %>%
+        mutate(probability = round(probability, 2),
+               lower = round(lower, 2),
+               upper = round(upper, 2)),
+      caption = "5-year distant metastasis probability with EJC subgroups") %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed", "responsive"))
+```
+
+```{r, echo = TRUE}
+kable(resSimpleDeath %>%
+        mutate(probability = round(probability, 2),
+               lower = round(lower, 2),
+               upper = round(upper, 2)),
+      caption = "5-year overall mortality probability with EJC subgroups") %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed", "responsive"))
+
+```
+
+# AJCC classifications
+```{r, echo = TRUE, warning = FALSE, message = FALSE}
+
+eortcData <- read.spss("./Data/EORTC_CLEAN.sav",
+                       to.data.frame = TRUE)
+eortcData$id <- 1:dim(eortcData)[1] 
+## Set dates 1582-10-14 to NA
+eortcData$Date_dist_met <- ifelse(eortcData$Date_dist_met == 0, NA, eortcData$Date_dist_met)
+eortcData$first_rec <- ifelse(eortcData$first_rec == 0, NA, eortcData$first_rec)
+## Transform into dates and create new times to event
+eortcData <- eortcData %>%
+  mutate(last_FU = spss2Date(last_FU), 
+         SLNBdate = spss2Date(SLNBdate),
+         first_rec = spss2Date(first_rec),
+         Date_dist_met = spss2Date(Date_dist_met),
+         recurrence = ifelse(recurrence == "yes", 1, 0)) 
+## problematic observations -> typos with dates could be the reason
+eortcData[eortcData$id == 344, ]$last_FU <- eortcData[eortcData$id == 344, ]$Date_dist_met
+eortcData[eortcData$id == 926, ]$first_rec <- eortcData[eortcData$id == 926, ]$Date_dist_met <- eortcData[eortcData$id == 926, ]$last_FU
+eortcData[eortcData$id == 1042, ]$first_rec <- eortcData[eortcData$id == 1042, ]$Date_dist_met <- eortcData[eortcData$id == 1042, ]$last_FU
+eortcData <- eortcData %>%
+  mutate(timeToFollowup = as.numeric((last_FU - SLNBdate)/30.5),
+         timeToRecurrence = as.numeric((first_rec - SLNBdate)/30.5),
+         timeToDistant = as.numeric(Date_dist_met - SLNBdate)/30.5)
+eortcData$timeToRecurrence <- ifelse(is.na(eortcData$timeToRecurrence),
+                                     as.numeric(eortcData$last_FU - eortcData$SLNBdate)/30.5,
+                                     eortcData$timeToRecurrence)
+eortcData$timeToDistant <- ifelse(is.na(eortcData$timeToDistant),
+                                  as.numeric(eortcData$last_FU - eortcData$SLNBdate)/30.5,
+                                  eortcData$timeToDistant)
+eortcData$clark <- factor(eortcData$clark,
+                          levels = c("ii", "iii", "iv", "v")) # dropping declared levels "i" and "unknown" that are never encountered
+## exclude weird observations
+eortcData <- eortcData %>%
+  filter(!(id %in% c(7, 310, 863)))
+# glimpse(eortcData)
+##################################
+# Extract data
+##################################
+selectedVariables <-c("id", "center", "age", "sex", "simpleloc", "clark", "CLND",
+                      "histology_simple", "histology_extended", "breslow",
+                      "ulceration", "SLNBdate", "no_removed_SNs", "AJCC_sub_SLNB_8th",
+                      "no_pos_SNs", "no_pos_SNs_cat", "SN_tumor_burden",
+                      "SN_tumor_burden_extended", "SN_tumor_burden_simple",
+                      "no_removed_nonSNs", "no_pos_nonSNs", "no_pos_nonSNs_cat",
+                      "EJC_groups", "Risk_classes", "AJCC_7th_extra", "AJCC_8th_extra")
+outcomes <- c("status_RFS_FDA", "timeToRecurrence", 
+              "status_DMFS_FDA", "timeToDistant",
+              "status_OS_FDA", "timeToFollowup",
+              "status_RFS_FDA60", "status_DMFS_FDA60",
+              "status_OS_FDA60")
+statusOutcomesoutcomes <- c("status_RFS_FDA", 
+                            "status_DMFS_FDA", 
+                            "status_OS_FDA")
+dat <- eortcData %>%
+  select(c(selectedVariables, outcomes))
+dat$AJCC_sub_SLNB_8th <- gsub(" ", "", dat$AJCC_sub_SLNB_8th)
+dat$timeToRecurrence60 <- ifelse(eortcData$timeToRecurrence < 60, 
+                                 eortcData$timeToRecurrence,
+                                 60)
+dat$timeToDistant60 <- ifelse(eortcData$timeToDistant < 60,
+                              eortcData$timeToDistant,
+                              60)
+dat$timeToFollowup60 <- ifelse(eortcData$timeToFollowup < 60,
+                               eortcData$timeToFollowup,
+                               60)
+```
+## AJCC 7th subgroups
+```{r, echo = TRUE}
+
+newData <- subset(dat, !is.na(AJCC_7th_extra))
+cIndexAJCC_7th_Rec <- cIndexAJCC_7th(data = newData,
+                                     timeToOutcome = "timeToRecurrence60",
+                                     outcomeStatus = "status_RFS_FDA60")
+cIndexAJCC_7th_Distant <- cIndexAJCC_7th(data = newData,
+                                         timeToOutcome = "timeToRecurrence60",
+                                         outcomeStatus = "status_DMFS_FDA60")
+cIndexAJCC_7th_Death <- cIndexAJCC_7th(data = newData,
+                                       timeToOutcome = "timeToFollowup",
+                                       outcomeStatus = "status_OS_FDA60")
+
+cIndexData <- data.frame(outcome = c("Recurrence", "Distant meatastasis", "Overall mortality"),
+                         cIndex = c(cIndexAJCC_7th_Rec[1], cIndexAJCC_7th_Distant[1], cIndexAJCC_7th_Death[1]),
+                         lower = c(cIndexAJCC_7th_Rec[1] - qnorm(.975)*cIndexAJCC_7th_Rec[2],
+                                   cIndexAJCC_7th_Distant[1] - qnorm(.975)*cIndexAJCC_7th_Distant[2],
+                                   cIndexAJCC_7th_Death[1] - qnorm(.975)*cIndexAJCC_7th_Death[2]),
+                         upper = c(cIndexAJCC_7th_Rec[1] + qnorm(.975)*cIndexAJCC_7th_Rec[2],
+                                   cIndexAJCC_7th_Distant[1] + qnorm(.975)*cIndexAJCC_7th_Distant[2],
+                                   cIndexAJCC_7th_Death[1] + qnorm(.975)*cIndexAJCC_7th_Death[2])) %>%
+  mutate(cIndex = round(cIndex, 2),
+         lower = round(lower, 2),
+         upper = round(upper, 2))
+
+```
+
+```{r, echo = TRUE}
+
+kable(cIndexData, 
+      caption = "c-indices for AJCC 7th classification") %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed", "responsive"))
+```
+
+```{r, echo = TRUE}
+newData <- subset(dat, !is.na(AJCC_7th_extra))
+SRec <- Surv(newData$timeToRecurrence60,
+             newData$status_RFS_FDA60)
+form <- SRec ~ AJCC_7th_extra
+f.AJCC_7th_Rec <- cph(formula = form,
+                      data = newData,
+                      x = TRUE,
+                      y = TRUE)
+
+runSurvEstimation <- survest(f.AJCC_7th_Rec,
+                             newdata = data.frame(AJCC_7th_extra = unique(newData$AJCC_7th_extra)), times = 60)
+resAJCC_7th_Rec <- data.frame(AJCC_7th_extra = unique(newData$AJCC_7th_extra), 
+                              probability = 1 - runSurvEstimation$surv, 
+                              lower = 1 - runSurvEstimation$upper, 
+                              upper = 1 - runSurvEstimation$lower) %>%
+  arrange(AJCC_7th_extra)
+
+
+
+
+# Distant metastasis
+
+SDistant <- Surv(newData$timeToDistant60,
+                 newData$status_DMFS_FDA60)
+form <- SDistant ~ AJCC_7th_extra
+f.AJCC_7th_Distant <- cph(formula = form,
+                          data = newData,
+                          x = TRUE,
+                          y = TRUE)
+
+runSurvEstimation <- survest(f.AJCC_7th_Distant,
+                             newdata = data.frame(AJCC_7th_extra = unique(newData$AJCC_7th_extra)), times = 60)
+resAJCC_7th_Distant <- data.frame(AJCC_7th_extra = unique(newData$AJCC_7th_extra), 
+                                  probability = 1 - runSurvEstimation$surv, 
+                                  lower = 1 - runSurvEstimation$upper, 
+                                  upper = 1 - runSurvEstimation$lower) %>%
+  arrange(AJCC_7th_extra)
+
+
+
+
+
+# Overall survival
+SDeath <- Surv(newData$timeToFollowup60,
+               newData$status_OS_FDA60)
+form <- SDeath ~ AJCC_7th_extra
+f.AJCC_7th_Death <- cph(formula = form,
+                        data = newData,
+                        x = TRUE,
+                        y = TRUE)
+
+runSurvEstimation <- survest(f.AJCC_7th_Death,
+                             newdata = data.frame(AJCC_7th_extra = unique(newData$AJCC_7th_extra)), times = 60)
+resAJCC_7th_Death <- data.frame(AJCC_7th_extra = unique(newData$AJCC_7th_extra), 
+                                probability = 1 - runSurvEstimation$surv, 
+                                lower = 1 - runSurvEstimation$upper, 
+                                upper = 1 - runSurvEstimation$lower) %>%
+  arrange(AJCC_7th_extra)
+```
+
+```{r, echo = TRUE}
+
+kable(resAJCC_7th_Rec %>%
+        mutate(probability = round(probability, 2),
+               lower = round(lower, 2),
+               upper = round(upper, 2)), 
+      caption = "5-year recurrence probability with AJCC-7th subgroups") %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed", "responsive"))
+```
+
+```{r, echo = TRUE}
+kable(resAJCC_7th_Distant %>%
+        mutate(probability = round(probability, 2),
+               lower = round(lower, 2),
+               upper = round(upper, 2)), 
+      caption = "5-year distant metastasis probability with AJCC-7th subgroups") %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed", "responsive"))
+```
+
+```{r, echo = TRUE}
+kable(resAJCC_7th_Death %>%
+        mutate(probability = round(probability, 2),
+               lower = round(lower, 2),
+               upper = round(upper, 2)), 
+      caption = "5-year overall mortality probability with AJCC-7th subgroups") %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed", "responsive"))
+```
+
+## AJCC 8th subgroups
+
+```{r, echo = TRUE}
+
+newData <- subset(dat, !is.na(AJCC_8th_extra))
+cIndexAJCC_8th_Rec <- cIndexAJCC_8th(data = newData,
+                                     timeToOutcome = "timeToRecurrence60",
+                                     outcomeStatus = "status_RFS_FDA60")
+cIndexAJCC_8th_Distant <- cIndexAJCC_8th(data = newData,
+                                         timeToOutcome = "timeToRecurrence60",
+                                         outcomeStatus = "status_DMFS_FDA60")
+cIndexAJCC_8th_Death <- cIndexAJCC_8th(data = newData,
+                                       timeToOutcome = "timeToFollowup",
+                                       outcomeStatus = "status_OS_FDA60")
+cIndexData <- data.frame(outcome = c("Recurrence", "Distant meatastasis", "Overall mortality"),
+                         cIndex = c(cIndexAJCC_8th_Rec[1], cIndexAJCC_8th_Distant[1], cIndexAJCC_8th_Death[1]),
+                         lower = c(cIndexAJCC_8th_Rec[1] - qnorm(.975)*cIndexAJCC_8th_Rec[2],
+                                   cIndexAJCC_8th_Distant[1] - qnorm(.975)*cIndexAJCC_8th_Distant[2],
+                                   cIndexAJCC_8th_Death[1] - qnorm(.975)*cIndexAJCC_8th_Death[2]),
+                         upper = c(cIndexAJCC_8th_Rec[1] + qnorm(.975)*cIndexAJCC_8th_Rec[2],
+                                   cIndexAJCC_8th_Distant[1] + qnorm(.975)*cIndexAJCC_8th_Distant[2],
+                                   cIndexAJCC_8th_Death[1] + qnorm(.975)*cIndexAJCC_8th_Death[2])) %>%
+  mutate(cIndex = round(cIndex, 2),
+         lower = round(lower, 2),
+         upper = round(upper, 2))
+```
+
+```{r, echo = TRUE}
+
+kable(cIndexData, 
+      caption = "c-indices for AJCC 8th classification") %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed", "responsive"))
+```
+
+```{r, echo = TRUE}
+
+SRec <- Surv(newData$timeToRecurrence60,
+             newData$status_RFS_FDA60)
+form <- SRec ~ AJCC_8th_extra
+f.AJCC_8th_Rec <- cph(formula = form,
+                      data = newData,
+                      x = TRUE,
+                      y = TRUE)
+
+runSurvEstimation <- survest(f.AJCC_8th_Rec,
+                             newdata = data.frame(AJCC_8th_extra = unique(newData$AJCC_8th_extra)), times = 60)
+resAJCC_8th_Rec <- data.frame(AJCC_8th_extra = unique(newData$AJCC_8th_extra), 
+                              probability = 1 - runSurvEstimation$surv, 
+                              lower = 1 - runSurvEstimation$upper, 
+                              upper = 1 - runSurvEstimation$lower) %>%
+  arrange(AJCC_8th_extra)
+
+
+
+# Distant metastasis
+
+SDistant <- Surv(newData$timeToDistant60,
+                 newData$status_DMFS_FDA60)
+form <- SDistant ~ AJCC_8th_extra
+f.AJCC_8th_Distant <- cph(formula = form,
+                          data = newData,
+                          x = TRUE,
+                          y = TRUE)
+
+runSurvEstimation <- survest(f.AJCC_8th_Distant,
+                             newdata = data.frame(AJCC_8th_extra = unique(newData$AJCC_8th_extra)), times = 60)
+resAJCC_8th_Distant <- data.frame(AJCC_8th_extra = unique(newData$AJCC_8th_extra), 
+                                  probability = 1 - runSurvEstimation$surv, 
+                                  lower = 1 - runSurvEstimation$upper, 
+                                  upper = 1 - runSurvEstimation$lower) %>%
+  arrange(AJCC_8th_extra)
+
+
+
+
+# Overall survival
+SDeath <- Surv(newData$timeToFollowup60,
+               newData$status_OS_FDA60)
+form <- SDeath ~ AJCC_8th_extra
+f.AJCC_8th_Death <- cph(formula = form,
+                        data = newData,
+                        x = TRUE,
+                        y = TRUE)
+
+runSurvEstimation <- survest(f.AJCC_8th_Death,
+                             newdata = data.frame(AJCC_8th_extra = unique(newData$AJCC_8th_extra)), times = 60)
+resAJCC_8th_Death <- data.frame(AJCC_8th_extra = unique(newData$AJCC_8th_extra), 
+                                probability = 1 - runSurvEstimation$surv, 
+                                lower = 1 - runSurvEstimation$upper, 
+                                upper = 1 - runSurvEstimation$lower) %>%
+  arrange(AJCC_8th_extra)
+```
+
+```{r, echo = TRUE}
+
+kable(resAJCC_8th_Rec %>%
+        mutate(probability = round(probability, 2),
+               lower = round(lower, 2),
+               upper = round(upper, 2)), 
+      caption = "5-year recurrence probability with AJCC-8th subgroups") %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed", "responsive"))
+
+```
+
+```{r, echo = TRUE}
+kable(resAJCC_8th_Distant %>%
+        mutate(probability = round(probability, 2),
+               lower = round(lower, 2),
+               upper = round(upper, 2)), 
+      caption = "5-year distant metastasis probability with AJCC-8th subgroups") %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed", "responsive"))
+```
+
+```{r, echo = TRUE}
+kable(resAJCC_8th_Death %>%
+        mutate(probability = round(probability, 2),
+               lower = round(lower, 2),
+               upper = round(upper, 2)), 
+      caption = "5-year overall mortality probability with AJCC-8th subgroups") %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed", "responsive"))
+
+```
+
+# Overall probabilities
+
+```{r, echo = TRUE, message = FALSE, warning = FALSE}
+spss2Date <- function(x) as.Date(x/86400, origin = "1582-10-14") # converts spss date to r date
+tableCount <- 0
+figureCount <- 0
+##################################
+# Read data
+##################################
+eortcData <- read.spss("./Data/EORTC.sav",
+                       to.data.frame = TRUE)
+eortcData$id <- 1:dim(eortcData)[1] 
+## Set dates 1582-10-14 to NA
+eortcData$Date_dist_met <- ifelse(eortcData$Date_dist_met == 0, NA, eortcData$Date_dist_met)
+eortcData$first_rec <- ifelse(eortcData$first_rec == 0, NA, eortcData$first_rec)
+## Transform into dates and create new times to event
+eortcData <- eortcData %>%
+  mutate(last_FU = spss2Date(last_FU), 
+         SLNBdate = spss2Date(SLNBdate),
+         first_rec = spss2Date(first_rec),
+         Date_dist_met = spss2Date(Date_dist_met),
+         recurrence = ifelse(recurrence == "yes", 1, 0)) 
+## problematic observations -> typos with dates could be the reason
+eortcData[eortcData$id == 344, ]$last_FU <- eortcData[eortcData$id == 344, ]$Date_dist_met
+eortcData[eortcData$id == 926, ]$first_rec <- eortcData[eortcData$id == 926, ]$Date_dist_met <- eortcData[eortcData$id == 926, ]$last_FU
+eortcData[eortcData$id == 1042, ]$first_rec <- eortcData[eortcData$id == 1042, ]$Date_dist_met <- eortcData[eortcData$id == 1042, ]$last_FU
+eortcData <- eortcData %>%
+  mutate(timeToFollowup = as.numeric((last_FU - SLNBdate)/30.5),
+         timeToRecurrence = as.numeric((first_rec - SLNBdate)/30.5),
+         timeToDistant = as.numeric(Date_dist_met - SLNBdate)/30.5)
+eortcData$timeToRecurrence <- ifelse(is.na(eortcData$timeToRecurrence),
+                                     as.numeric(eortcData$last_FU - eortcData$SLNBdate)/30.5,
+                                     eortcData$timeToRecurrence)
+eortcData$timeToDistant <- ifelse(is.na(eortcData$timeToDistant),
+                                  as.numeric(eortcData$last_FU - eortcData$SLNBdate)/30.5,
+                                  eortcData$timeToDistant)
+eortcData$clark <- factor(eortcData$clark,
+                          levels = c("ii", "iii", "iv", "v")) # dropping declared levels "i" and "unknown" that are never encountered
+## exclude weird observations
+eortcData <- eortcData %>%
+  filter(!(id %in% c(7, 310, 863)))
+# glimpse(eortcData)
+##################################
+# Extract data
+##################################
+selectedVariables <-c("id", "center", "age", "sex", "simpleloc", "clark", "CLND",
+                      "histology_simple", "histology_extended", "breslow",
+                      "ulceration", "SLNBdate", "no_removed_SNs", "AJCC_sub_SLNB_8th",
+                      "no_pos_SNs", "no_pos_SNs_cat", "SN_tumor_burden",
+                      "SN_tumor_burden_extended", "SN_tumor_burden_simple",
+                      "no_removed_nonSNs", "no_pos_nonSNs", "no_pos_nonSNs_cat",
+                      "EJC_groups", "Risk_classes")
+outcomes <- c("status_RFS_FDA", "timeToRecurrence", 
+              "status_DMFS_FDA", "timeToDistant",
+              "status_OS_FDA", "timeToFollowup",
+              "status_RFS_FDA60", "status_DMFS_FDA60",
+              "status_OS_FDA60")
+statusOutcomesoutcomes <- c("status_RFS_FDA", 
+                            "status_DMFS_FDA", 
+                            "status_OS_FDA")
+dat <- eortcData %>%
+  select(c(selectedVariables, outcomes))
+dat$AJCC_sub_SLNB_8th <- gsub(" ", "", dat$AJCC_sub_SLNB_8th)
+dat$timeToRecurrence60 <- ifelse(eortcData$timeToRecurrence < 60, 
+                                 eortcData$timeToRecurrence,
+                                 60)
+dat$timeToDistant60 <- ifelse(eortcData$timeToDistant < 60,
+                              eortcData$timeToDistant,
+                              60)
+dat$timeToFollowup60 <- ifelse(eortcData$timeToFollowup < 60,
+                               eortcData$timeToFollowup,
+                               60)
+dd <- datadist(dat)
+options(datadist = 'dd')
+options(digits = 8)
+miVariables <- c("center", "age", "sex", "simpleloc", "SN_tumor_burden_extended",
+                 "histology_simple","breslow", "AJCC_sub_SLNB_8th", 
+                 "no_pos_SNs", "no_removed_SNs", "EJC_groups",
+                 "ulceration", "SLNBdate",
+                 "SN_tumor_burden", "no_removed_nonSNs",
+                 "status_RFS_FDA", "timeToRecurrence", 
+                 "status_DMFS_FDA", "timeToDistant",
+                 "status_OS_FDA", "timeToFollowup")
+miData <- dat[miVariables] 
+miData$timeToRecurrence <- log(miData$timeToRecurrence)
+miData$timeToDistant <- log(miData$timeToDistant)
+miData$timeToFollowup <- log(miData$timeToFollowup)
+# multiple imputations
+# miDataResult <- mice(data = miData, m = 20)
+# saveRDS(miDataResult, file = "miDataResult.rds")
+miDataResult <- readRDS("miDataResult.rds")
+
+S <- Surv(dat$timeToRecurrence60,
+          dat$status_RFS_FDA60)
+form <- S ~ ulceration + log(age) + log(SN_tumor_burden) + log(breslow)
+f.miRec <- fit.mult.impute(form,
+                           cph,
+                           xtrans = miDataResult,
+                           data = miData,
+                           n.impute = 20,
+                           pr = FALSE,
+                           fit.reps = TRUE,
+                           y = TRUE,
+                           x = TRUE,
+                           se.fit = TRUE)
+
+dat.complete <- complete(miDataResult, 1)
+runSurvEstimation <- survest(f.miRec, newdata = dat.complete, times = 60)
+test <- data.frame(surv = 1 - runSurvEstimation$surv)
+test <- cbind(dat, test) %>%
+  mutate(riskSubgroup = cut(surv, c(0, .25, .5 , .75, 1)))
+```
+
+```{r, echo = TRUE}
+
+kaplanMeier <- survfit(Surv(timeToRecurrence, status_RFS_FDA) ~ riskSubgroup, data = test)
+pp <- summary(kaplanMeier, times = 60)
+
+overallProbabilities <- data.frame(riskGroup = pp$strata,
+                                   probability = 1 - pp$surv,
+                                   lower = 1 - pp$upper,
+                                   upper = 1 - pp$lower) %>%
+  mutate(riskGroup = factor(riskGroup, labels = c("(0,0.25]", "(0.25,0.50]", "(0.50,0.75]", "(0.75, 1]")),
+         probability = round(probability, 2),
+         lower = round(lower, 2),
+         upper = round(upper, 2))
+
+kable(overallProbabilities, 
+      caption = "Observed 5-year recurrence rates within subgroups risk using our model") %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed", "responsive"))
+
+```
+
+```{r, echo = TRUE}
+
+kaplanMeierDistant <- survfit(Surv(timeToDistant, status_DMFS_FDA) ~ riskSubgroup, data = test)
+pp <- summary(kaplanMeierDistant, times = 60)
+
+overallProbabilities <- data.frame(riskGroup = pp$strata,
+                                   probability = 1 - pp$surv,
+                                   lower = 1 - pp$upper,
+                                   upper = 1 - pp$lower) %>%
+  mutate(riskGroup = factor(riskGroup, labels = c("(0,0.25]", "(0.25,0.50]", "(0.50,0.75]", "(0.75, 1]")),
+         probability = round(probability, 2),
+         lower = round(lower, 2),
+         upper = round(upper, 2))
+
+kable(overallProbabilities, 
+      caption = "Observed 5-year distant metastasis rates within risk subgroups using our model") %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed", "responsive"))
+
+```
+
+```{r, echo = TRUE}
+
+kaplanMeierDeath <- survfit(Surv(timeToFollowup, status_OS_FDA) ~ riskSubgroup, data = test)
+pp <- summary(kaplanMeierDeath, times = 60)
+
+overallProbabilities <- data.frame(riskGroup = pp$strata,
+                                   probability = 1 - pp$surv,
+                                   lower = 1 - pp$upper,
+                                   upper = 1 - pp$lower) %>%
+  mutate(riskGroup = factor(riskGroup, labels = c("(0,0.25]", "(0.25,0.50]", "(0.50,0.75]", "(0.75, 1]")),
+         probability = round(probability, 2),
+         lower = round(lower, 2),
+         upper = round(upper, 2))
+
+kable(overallProbabilities, 
+      caption = "Observed 5-year overall mortality rates within risk subgroups using our model") %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed", "responsive"))
+
+```
