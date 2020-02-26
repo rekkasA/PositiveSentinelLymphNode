@@ -1,4 +1,4 @@
-# PositiveSentinelLymphNode
+# The EORTC-DeCOG nomogram adequately predicts outcomes of patients with sentinel node positive melanoma without the need for completion lymph node dissection
 
 ## ABSTRACT
 **PURPOSE**: Based on recent advances in the management of sentinel node (SN) positive melanoma patients, we aimed to develop prediction models for recurrence, distant metastasis (DM) and overall mortality (OM).
